@@ -1,0 +1,11 @@
+[package]
+name = "uniffi-bindgen"
+description = "Generates the Kotlin bindings of libnpw_android.so (run by app/build.gradle.kts)"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[dependencies]
+# Must match the uniffi version npw-ffi uses (one Cargo.lock keeps them equal).
+uniffi = { version = "0.32", features = ["cli"] }

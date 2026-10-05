@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="background">#FF17181C</color>
+    <color name="autofill_title">#FFE8E9EE</color>
+    <color name="autofill_subtitle">#FFA5AAB5</color>
+</resources>

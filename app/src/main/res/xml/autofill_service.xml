@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The settings link opens the app. Browsers without native autofill
+     support are served through the system's compatibility mode (Android 9+);
+     Chrome, Edge and Firefox use the native API ("use another service for
+     autofill" in their settings) and are not listed here. -->
+<autofill-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:settingsActivity="app.nya.password.MainActivity"
+    android:supportsInlineSuggestions="true">
+    <compatibility-package android:name="com.UCMobile" android:maxLongVersionCode="10000000000" />
+    <compatibility-package android:name="com.tencent.mtt" android:maxLongVersionCode="10000000000" />
+    <compatibility-package android:name="com.quark.browser" android:maxLongVersionCode="10000000000" />
+    <compatibility-package android:name="com.baidu.searchbox" android:maxLongVersionCode="10000000000" />
+    <compatibility-package android:name="com.huawei.browser" android:maxLongVersionCode="10000000000" />
+    <compatibility-package android:name="com.hihonor.baidu.browser" android:maxLongVersionCode="10000000000" />
+    <compatibility-package android:name="com.android.browser" android:maxLongVersionCode="10000000000" />
+    <compatibility-package android:name="com.mi.globalbrowser" android:maxLongVersionCode="10000000000" />
+    <compatibility-package android:name="com.heytap.browser" android:maxLongVersionCode="10000000000" />
+    <compatibility-package android:name="com.coloros.browser" android:maxLongVersionCode="10000000000" />
+    <compatibility-package android:name="com.vivo.browser" android:maxLongVersionCode="10000000000" />
+    <compatibility-package android:name="com.qihoo.browser" android:maxLongVersionCode="10000000000" />
+    <compatibility-package android:name="com.sec.android.app.sbrowser" android:maxLongVersionCode="10000000000" />
+    <compatibility-package android:name="com.opera.browser" android:maxLongVersionCode="10000000000" />
+    <compatibility-package android:name="com.vivaldi.browser" android:maxLongVersionCode="10000000000" />
+    <compatibility-package android:name="com.kiwibrowser.browser" android:maxLongVersionCode="10000000000" />
+    <compatibility-package android:name="mark.via" android:maxLongVersionCode="10000000000" />
+</autofill-service>

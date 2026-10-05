@@ -1,0 +1,35 @@
+[package]
+name = "npw-android"
+description = "NyaPassword Android: the shared Rust core (npw-ffi) as the library the app loads"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+# The Kotlin app lives in app/; this crate builds libnpw_android.so for it
+# (app/build.gradle.kts runs cargo-ndk, then generates the Kotlin bindings
+# from the built library with uniffi-bindgen/). rlib so the tests run on the host.
+[lib]
+name = "npw_android"
+path = "rust/src/lib.rs"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# Shared crates from the common repository, checked out next to this one
+# (CI does the same; a release pins the commit in COMMON_REF).
+npw-ffi = { path = "../common/crates/npw-ffi" }
+
+[workspace]
+members = [".", "uniffi-bindgen"]
+default-members = ["."]
+resolver = "2"
+
+[profile.release]
+lto = "thin"
+debug = "line-tables-only"
+
+# Argon2 and the AEAD are unusably slow unoptimized; keep host tests fast.
+[profile.dev.package."*"]
+opt-level = 2
+[profile.test.package."*"]
+opt-level = 2
