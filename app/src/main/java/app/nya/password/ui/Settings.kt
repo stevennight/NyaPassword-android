@@ -1,16 +1,20 @@
 package app.nya.password.ui
 
 import android.content.Intent
+import androidx.activity.compose.BackHandler
 import androidx.core.net.toUri
 import android.os.Build
 import android.provider.Settings
 import android.view.autofill.AutofillManager
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -19,8 +23,12 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -30,15 +38,18 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -52,6 +63,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.credentials.CredentialManager
 import app.nya.password.BuildConfig
 import app.nya.password.MainActivity
+import app.nya.password.core.AuditEntry
 import app.nya.password.core.DeviceRecord
 import app.nya.password.core.EmergencyKit
 import app.nya.password.core.Updater
@@ -59,6 +71,7 @@ import app.nya.password.core.decode
 import app.nya.password.core.errorText
 import app.nya.password.ffi.coreVersion
 import app.nya.password.vault
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -69,6 +82,32 @@ import java.util.Locale
 
 private val LOCK_OPTIONS = listOf(1 to "1 分钟", 5 to "5 分钟", 10 to "10 分钟", 30 to "30 分钟", 60 to "1 小时", 240 to "4 小时", 0 to "从不（仅锁屏 / 重启时）")
 
+/** The settings pages: the desktop / web client's categories that apply on Android, in the same order. */
+private enum class SettingsCategory(val title: String, val summary: String) {
+    GENERAL("通用", "外观、版本与更新"),
+    SECURITY("安全与解锁", "自动锁定、生物识别、PIN"),
+    AUTOFILL("自动填充与通行密钥", "自动填充服务与设置引导"),
+    ACCOUNT("账户", "紧急恢复包、同步、主密码、退出"),
+    VAULTS("保险库", "保险库列表、新建与改名"),
+    DEVICES("设备与日志", "登录的设备与账户日志"),
+}
+
+/**
+ * The category to show again when the settings come back: a page on top of
+ * the tabs (the setup guide) takes this screen out of the composition.
+ */
+private var reopenCategory: SettingsCategory? = null
+
+/** Account log actions (the web vault's `ACTIONS`). */
+private val AUDIT_ACTIONS = mapOf(
+    "register" to "注册", "login" to "登录", "login_failed" to "登录失败", "password_change" to "修改主密码",
+    "device_revoke" to "移除设备", "vault_create" to "新建保险库", "import" to "导入", "purge" to "永久删除",
+)
+
+/**
+ * Settings: a list of categories, then one category's groups (side by side
+ * on wide screens). The selected category survives configuration changes.
+ */
 @Composable
 fun SettingsScreen(activity: MainActivity, pad: PaddingValues) {
     val v = activity.vault
@@ -79,6 +118,7 @@ fun SettingsScreen(activity: MainActivity, pad: PaddingValues) {
     var checkUpdates by remember { mutableStateOf(v.prefs.checkUpdates) }
     var kit by remember { mutableStateOf<EmergencyKit?>(null) }
     var devices by remember { mutableStateOf<List<DeviceRecord>?>(null) }
+    var audit by remember { mutableStateOf<List<AuditEntry>?>(null) }
     var revoke by remember { mutableStateOf<DeviceRecord?>(null) }
     var changePw by remember { mutableStateOf(false) }
     var signOut by remember { mutableStateOf(false) }
@@ -90,6 +130,13 @@ fun SettingsScreen(activity: MainActivity, pad: PaddingValues) {
     var pinState by remember { mutableStateOf(v.pinStatus()) }
     var pinDialog by remember { mutableStateOf(false) }
     var removePin by remember { mutableStateOf(false) }
+    // the open category (null: the list), saved by name
+    var catName by rememberSaveable {
+        val r = reopenCategory
+        reopenCategory = null
+        mutableStateOf(r?.name)
+    }
+    val cat = SettingsCategory.entries.find { it.name == catName }
 
     // the autofill status changes in system settings
     val owner = LocalLifecycleOwner.current
@@ -107,142 +154,220 @@ fun SettingsScreen(activity: MainActivity, pad: PaddingValues) {
         }
     }
 
-    Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = pad.calculateBottomPadding() + 24.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-    ) {
-        Text("设置", fontSize = 24.sp, fontWeight = FontWeight.Bold)
-
-        Group(title = "账户") {
-            Field("账号", v.lock.login)
-            Field("服务器", v.lock.serverUrl)
-            Field("上次同步", ago(v.lock.lastSyncAt) + if (v.syncError.isNotEmpty()) " · ${v.syncError}" else "")
-            Row(Modifier.padding(horizontal = 16.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = { act { kit = decode(v.call { it.emergencyKit() }) } }) { Text("查看紧急恢复包") }
-                OutlinedButton(onClick = { v.syncSoon(silent = false) }, enabled = !v.syncing) { Text(if (v.syncing) "同步中…" else "立即同步") }
-            }
+    /** Devices and the account log (the log is best effort, as on the web). */
+    suspend fun loadDevices() {
+        try {
+            devices = decode<List<DeviceRecord>>(v.call { it.devices() })
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            v.say(errorText(e))
         }
+        audit = try {
+            decode<List<AuditEntry>>(v.call { it.auditLog() })
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            emptyList<AuditEntry>()
+        }
+    }
 
-        Group(title = "解锁与锁定") {
-            Field("空闲后自动锁定", "这段时间没有使用就锁定（自动填充也算使用）") {
-                Select(LOCK_OPTIONS, autoLock) {
-                    autoLock = it
-                    v.prefs.autoLockMinutes = it
-                    v.touch()
-                }
-            }
-            SwitchField("屏幕关闭时锁定", checked = screenOff) {
-                screenOff = it
-                v.prefs.lockOnScreenOff = it
-            }
-            if (bioAvailable) {
-                SwitchField(
-                    "使用指纹 / 面容解锁",
-                    "每 14 天仍需输入一次主密码；新增指纹 / 面容后自动失效",
-                    checked = bio,
-                ) { on ->
-                    if (on) {
-                        Biometrics.enable(activity, v) { err ->
-                            if (err == null) {
-                                bio = true
-                                v.say("已开启生物识别解锁")
-                            } else {
-                                v.say(err)
+    // one category's groups, scrolled; the bottom padding keeps clear of the navigation bar
+    val detail: @Composable (SettingsCategory, Modifier) -> Unit = { c, modifier ->
+        key(c) {
+            Column(
+                modifier.verticalScroll(rememberScrollState()).padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = pad.calculateBottomPadding() + 24.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                when (c) {
+                    SettingsCategory.GENERAL -> {
+                        Text("外观跟随系统的浅色 / 深色设置。", Modifier.padding(horizontal = 4.dp), fontSize = 12.5.sp, color = muted)
+                        AboutCard(activity, checkUpdates) {
+                            checkUpdates = it
+                            v.prefs.checkUpdates = it
+                        }
+                    }
+
+                    SettingsCategory.SECURITY -> Group(title = "解锁与锁定") {
+                        Field("空闲后自动锁定", "这段时间没有使用就锁定（自动填充也算使用）") {
+                            Select(LOCK_OPTIONS, autoLock) {
+                                autoLock = it
+                                v.prefs.autoLockMinutes = it
+                                v.touch()
                             }
                         }
-                    } else {
-                        app.nya.password.core.QuickUnlock.clear(activity)
-                        v.prefs.biometric = false
-                        bio = false
-                    }
-                }
-                if (bio) {
-                    SwitchField(
-                        "启动时可直接用生物识别解锁",
-                        "关闭后，应用重启后第一次解锁需要主密码",
-                        checked = atStart,
-                    ) { on ->
-                        atStart = on
-                        v.prefs.biometricAtStart = on
-                    }
-                }
-            } else {
-                Field("指纹 / 面容解锁", "这台设备没有可用的强生物识别（或尚未录入）")
-            }
-            Field(
-                "PIN 解锁",
-                if (pinState.set) {
-                    "已设置 · 至少 4 个字符，连续输错 5 次作废；每 14 天仍需输入一次主密码；也可用于“使用前需要验证”"
-                } else {
-                    "至少 4 个字符（任意字符），连续输错 5 次作废；只保存在这台手机上（硬件 Keystore 保护）"
-                },
-            ) {
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    if (pinState.set) TextButton(onClick = { removePin = true }) { Text("删除", color = MaterialTheme.colorScheme.error) }
-                    OutlinedButton(onClick = { pinDialog = true }) { Text(if (pinState.set) "修改" else "设置") }
-                }
-            }
-            Row(Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
-                OutlinedButton(onClick = { v.lock() }) { Text("立即锁定") }
-            }
-        }
-
-        Group(title = "自动填充与通行密钥") {
-            Field(
-                "自动填充服务",
-                if (autofillOn) "已启用 NyaPassword" else "未启用：在系统设置里选择 NyaPassword",
-            ) { Chip(if (autofillOn) "已启用" else "未启用", if (autofillOn) ChipKind.OK else ChipKind.WARN) }
-            Row(Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
-                Button(onClick = { activity.open(Route.Guide) }) { Text("设置引导") }
-            }
-        }
-
-        Group(title = "保险库") {
-            v.vaults.forEach { vv ->
-                Field(vv.name, "${vv.items} 个条目") { TextButton(onClick = { rename = vv.id to vv.name }) { Text("改名") } }
-            }
-            Row(Modifier.padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                OutlinedTextField(newVault, { newVault = it }, Modifier.weight(1f), placeholder = { Text("新保险库名称") }, singleLine = true)
-                Spacer(Modifier.width(8.dp))
-                OutlinedButton(onClick = {
-                    val name = newVault.trim()
-                    if (name.isNotEmpty()) {
-                        act {
-                            v.call { it.createVault(name) }
-                            newVault = ""
-                            v.refresh()
-                            v.say("保险库已创建")
+                        SwitchField("屏幕关闭时锁定", checked = screenOff) {
+                            screenOff = it
+                            v.prefs.lockOnScreenOff = it
+                        }
+                        if (bioAvailable) {
+                            SwitchField(
+                                "使用指纹 / 面容解锁",
+                                "每 14 天仍需输入一次主密码；新增指纹 / 面容后自动失效",
+                                checked = bio,
+                            ) { on ->
+                                if (on) {
+                                    Biometrics.enable(activity, v) { err ->
+                                        if (err == null) {
+                                            bio = true
+                                            v.say("已开启生物识别解锁")
+                                        } else {
+                                            v.say(err)
+                                        }
+                                    }
+                                } else {
+                                    app.nya.password.core.QuickUnlock.clear(activity)
+                                    v.prefs.biometric = false
+                                    bio = false
+                                }
+                            }
+                            if (bio) {
+                                SwitchField(
+                                    "启动时可直接用生物识别解锁",
+                                    "关闭后，应用重启后第一次解锁需要主密码",
+                                    checked = atStart,
+                                ) { on ->
+                                    atStart = on
+                                    v.prefs.biometricAtStart = on
+                                }
+                            }
+                        } else {
+                            Field("指纹 / 面容解锁", "这台设备没有可用的强生物识别（或尚未录入）")
+                        }
+                        Field(
+                            "PIN 解锁",
+                            if (pinState.set) {
+                                "已设置 · 至少 4 个字符，连续输错 5 次作废；每 14 天仍需输入一次主密码；也可用于“使用前需要验证”"
+                            } else {
+                                "至少 4 个字符（任意字符），连续输错 5 次作废；只保存在这台手机上（硬件 Keystore 保护）"
+                            },
+                        ) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                if (pinState.set) TextButton(onClick = { removePin = true }) { Text("删除", color = MaterialTheme.colorScheme.error) }
+                                OutlinedButton(onClick = { pinDialog = true }) { Text(if (pinState.set) "修改" else "设置") }
+                            }
+                        }
+                        Row(Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
+                            OutlinedButton(onClick = { v.lock() }) { Text("立即锁定") }
                         }
                     }
-                }) { Text("新建") }
-            }
-        }
 
-        Group(title = "主密码与设备") {
-            Field("修改主密码", "Secret Key 不变；紧急恢复包上的主密码记得一起更新") {
-                OutlinedButton(onClick = { changePw = true }) { Text("修改") }
-            }
-            Field("设备", "登录了这个账户的设备") {
-                OutlinedButton(onClick = { act { devices = decode(v.call { it.devices() }) } }) { Text(if (devices == null) "查看" else "刷新") }
-            }
-            devices?.forEach { d ->
-                Field(
-                    d.name + if (d.current) "（本机）" else "",
-                    "${d.platform} · ${d.clientVersion} · 最近活动 ${ago(d.lastSeenAt)}" + if (d.revokedAt != null) " · 已移除" else "",
-                ) {
-                    if (!d.current && d.revokedAt == null) TextButton(onClick = { revoke = d }) { Text("移除", color = MaterialTheme.colorScheme.error) }
+                    SettingsCategory.AUTOFILL -> Group(title = "自动填充与通行密钥") {
+                        Field(
+                            "自动填充服务",
+                            if (autofillOn) "已启用 NyaPassword" else "未启用：在系统设置里选择 NyaPassword",
+                        ) { Chip(if (autofillOn) "已启用" else "未启用", if (autofillOn) ChipKind.OK else ChipKind.WARN) }
+                        Row(Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
+                            Button(onClick = {
+                                // come back to this category from the guide
+                                reopenCategory = SettingsCategory.AUTOFILL
+                                activity.open(Route.Guide)
+                            }) { Text("设置引导") }
+                        }
+                    }
+
+                    SettingsCategory.ACCOUNT -> {
+                        Group(title = "账户") {
+                            Field("账号", v.lock.login)
+                            Field("服务器", v.lock.serverUrl)
+                            Field("上次同步", ago(v.lock.lastSyncAt) + if (v.syncError.isNotEmpty()) " · ${v.syncError}" else "")
+                            Row(Modifier.padding(horizontal = 16.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedButton(onClick = { act { kit = decode(v.call { it.emergencyKit() }) } }) { Text("查看紧急恢复包") }
+                                OutlinedButton(onClick = { v.syncSoon(silent = false) }, enabled = !v.syncing) { Text(if (v.syncing) "同步中…" else "立即同步") }
+                            }
+                        }
+                        Group(title = "主密码") {
+                            Field("修改主密码", "Secret Key 不变；紧急恢复包上的主密码记得一起更新") {
+                                OutlinedButton(onClick = { changePw = true }) { Text("修改") }
+                            }
+                        }
+                        Group(title = "退出") {
+                            Field("退出此设备上的账户", "删除此设备上的本地副本；下次登录需要 Secret Key") {
+                                OutlinedButton(onClick = { signOut = true }) { Text("退出", color = MaterialTheme.colorScheme.error) }
+                            }
+                        }
+                    }
+
+                    SettingsCategory.VAULTS -> Group(title = "保险库") {
+                        v.vaults.forEach { vv ->
+                            Field(vv.name, "${vv.items} 个条目") { TextButton(onClick = { rename = vv.id to vv.name }) { Text("改名") } }
+                        }
+                        Row(Modifier.padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                            OutlinedTextField(newVault, { newVault = it }, Modifier.weight(1f), placeholder = { Text("新保险库名称") }, singleLine = true)
+                            Spacer(Modifier.width(8.dp))
+                            OutlinedButton(onClick = {
+                                val name = newVault.trim()
+                                if (name.isNotEmpty()) {
+                                    act {
+                                        v.call { it.createVault(name) }
+                                        newVault = ""
+                                        v.refresh()
+                                        v.say("保险库已创建")
+                                    }
+                                }
+                            }) { Text("新建") }
+                        }
+                    }
+
+                    SettingsCategory.DEVICES -> {
+                        // loaded every time the category opens
+                        LaunchedEffect(Unit) { loadDevices() }
+                        val list = devices
+                        Group(title = "设备") {
+                            Field("登录了这个账户的设备", if (list == null) "加载中…" else "${list.size} 台") {
+                                OutlinedButton(onClick = { act { loadDevices() } }) { Text("刷新") }
+                            }
+                            list?.forEach { d ->
+                                Field(
+                                    d.name + if (d.current) "（本机）" else "",
+                                    "${d.platform} · ${d.clientVersion} · 最近活动 ${ago(d.lastSeenAt)}" + if (d.revokedAt != null) " · 已移除" else "",
+                                ) {
+                                    if (!d.current && d.revokedAt == null) TextButton(onClick = { revoke = d }) { Text("移除", color = MaterialTheme.colorScheme.error) }
+                                }
+                            }
+                        }
+                        val log = audit
+                        Group(title = "账户日志") {
+                            when {
+                                log == null -> Field("加载中…")
+                                log.isEmpty() -> Field("暂无记录")
+                                else -> log.take(50).forEach { a ->
+                                    Field(
+                                        AUDIT_ACTIONS[a.action] ?: a.action,
+                                        listOf(dateTime(a.at), a.detail, a.ip).filter { it.isNotBlank() }.joinToString(" · "),
+                                    )
+                                }
+                            }
+                            if (log != null && log.size > 50) Text("只显示最近 50 条", Modifier.padding(16.dp), fontSize = 12.sp, color = muted)
+                        }
+                    }
                 }
             }
         }
+    }
 
-        AboutCard(activity, checkUpdates) {
-            checkUpdates = it
-            v.prefs.checkUpdates = it
-        }
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val wide = maxWidth >= 720.dp
+        // composed after MainActivity's handler, so it wins: back from a category goes to the list;
+        // from the list MainActivity's handler goes back to the 密码库 tab as before
+        BackHandler(enabled = !wide && cat != null) { catName = null }
+        when {
+            wide -> {
+                val shown = cat ?: SettingsCategory.GENERAL
+                Row(Modifier.fillMaxSize()) {
+                    CategoryList(shown, pad, Modifier.width(300.dp).fillMaxHeight()) { catName = it.name }
+                    Column(Modifier.weight(1f).fillMaxHeight()) {
+                        Text(shown.title, Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 10.dp), fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                        detail(shown, Modifier.fillMaxSize())
+                    }
+                }
+            }
 
-        Group(title = "退出") {
-            Field("退出此设备上的账户", "删除此设备上的本地副本；下次登录需要 Secret Key") {
-                OutlinedButton(onClick = { signOut = true }) { Text("退出", color = MaterialTheme.colorScheme.error) }
+            cat == null -> CategoryList(null, pad, Modifier.fillMaxSize()) { catName = it.name }
+
+            else -> Column(Modifier.fillMaxSize()) {
+                PageTop(cat.title, { catName = null })
+                detail(cat, Modifier.fillMaxSize())
             }
         }
     }
@@ -264,7 +389,7 @@ fun SettingsScreen(activity: MainActivity, pad: PaddingValues) {
             revoke = null
             act {
                 v.call { it.revokeDevice(d.id) }
-                devices = decode(v.call { it.devices() })
+                loadDevices()
             }
         }
     }
@@ -318,6 +443,36 @@ fun SettingsScreen(activity: MainActivity, pad: PaddingValues) {
         ) {
             signOut = false
             act { v.signOut(true) }
+        }
+    }
+}
+
+/** The categories, one row each (the selected one highlighted on wide screens). */
+@Composable
+private fun CategoryList(selected: SettingsCategory?, pad: PaddingValues, modifier: Modifier, onPick: (SettingsCategory) -> Unit) {
+    Column(
+        modifier.verticalScroll(rememberScrollState()).padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = pad.calculateBottomPadding() + 24.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        Text("设置", fontSize = 24.sp, fontWeight = FontWeight.Bold)
+        Group {
+            SettingsCategory.entries.forEachIndexed { i, c ->
+                if (i > 0) HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant)
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .background(if (c == selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.10f) else Color.Transparent)
+                        .clickable { onPick(c) }
+                        .padding(start = 16.dp, end = 10.dp, top = 12.dp, bottom = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f).padding(end = 8.dp)) {
+                        Text(c.title, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                        Text(c.summary, fontSize = 12.5.sp, color = muted, lineHeight = 17.sp)
+                    }
+                    Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = muted)
+                }
+            }
         }
     }
 }

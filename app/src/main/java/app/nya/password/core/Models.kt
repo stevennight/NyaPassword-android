@@ -133,6 +133,16 @@ data class DeviceRecord(
     val current: Boolean = false,
 )
 
+/** One line of the account log (`AuditEntry` in npw-api; newest first). */
+@Serializable
+data class AuditEntry(
+    val at: Long = 0,
+    val action: String = "",
+    val deviceId: String = "",
+    val ip: String = "",
+    val detail: String = "",
+)
+
 @Serializable
 data class RevisionInfo(
     val revision: Long,
