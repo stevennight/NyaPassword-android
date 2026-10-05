@@ -78,9 +78,11 @@ class Vault(private val app: Application) {
     /** Short messages for a snackbar / toast. */
     val messages: SharedFlow<String> = _messages
 
-    /** Biometric unlock is only offered after a password unlock in this process run. */
+    /** The master password was entered in this process (biometrics at start need [Prefs.biometricAtStart] otherwise). */
     var passwordUnlockedThisRun = false
         private set
+    /** The 14-day rule and the PIN material, sealed by a Keystore key ([GuardFile]). */
+    val local = LocalUnlock(GuardFile(app)) { Log.w("npw", it) }
     private var lastActivity = SystemClock.elapsedRealtime()
     private var foreground = false
     private var foregroundJob: Job? = null
@@ -144,10 +146,56 @@ class Vault(private val app: Application) {
 
     val unlocked: Boolean get() = lock.unlocked
 
-    /** Whether the lock screen may offer biometrics (design doc §4.5). */
+    /** Whether the lock screen may offer biometrics (design doc §4.5): within 14 days, and at start only if allowed. */
     fun quickUnlockOffered(): Boolean =
-        prefs.biometric && QuickUnlock.stored(app) && passwordUnlockedThisRun &&
-            System.currentTimeMillis() - prefs.lastPasswordUnlockAt < QUICK_UNLOCK_MAX_AGE_MS
+        prefs.biometric && QuickUnlock.stored(app) && quickUnlockBlocked() == null
+
+    /** Why biometrics need the master password now (null: they do not). */
+    fun quickUnlockBlocked(): Stale? =
+        local.quickAllowed(lock.accountId, System.currentTimeMillis(), passwordUnlockedThisRun, prefs.biometricAtStart)
+
+    /** A PIN is set and may be used now (14-day rule). */
+    fun pinStatus(): PinStatus = local.pinStatus(lock.accountId, System.currentTimeMillis())
+
+    /** Unlocks with the PIN (counted try; five wrong ones delete it). Throws [PinFailure] / [CoreFailure]. */
+    suspend fun unlockWithPin(pin: String) {
+        val account = lock.accountId
+        withContext(Dispatchers.IO) {
+            local.tryPin(account, System.currentTimeMillis()) { blob -> callNow { it.unlockWithPin(blob, pin) } }
+        }
+        refresh()
+        onUnlocked()
+    }
+
+    /** Checks the PIN while unlocked (user verification, "使用前需要验证"). */
+    suspend fun verifyPin(pin: String) {
+        val account = lock.accountId
+        withContext(Dispatchers.IO) {
+            local.tryPin(account, System.currentTimeMillis()) { blob -> callNow { it.verifyPin(blob, pin) } }
+        }
+        touch()
+    }
+
+    /** Sets or changes the PIN: the core wraps the account key, the guard keeps it. */
+    suspend fun setPin(pin: String) {
+        require(LocalUnlock.pinValid(pin)) { "PIN 至少 4 个字符" }
+        val account = lock.accountId
+        withContext(Dispatchers.IO) {
+            LocalUnlock.fresh(local.get(account), System.currentTimeMillis())?.let { throw IllegalStateException(it.message) }
+            val blob = callNow { it.pinWrap(pin) }
+            local.setPin(account, blob, System.currentTimeMillis())
+        }
+    }
+
+    suspend fun removePin() = withContext(Dispatchers.IO) { local.removePin() }
+
+    /** A new master password: biometric and PIN material are set up again (design doc §4.5). */
+    suspend fun afterPasswordChange() {
+        QuickUnlock.clear(app)
+        prefs.biometric = false
+        withContext(Dispatchers.IO) { runCatching { local.removePin() } }
+        afterPasswordUnlock()
+    }
 
     suspend fun register(server: String, login: String, password: String, invite: String?): EmergencyKit {
         val kit: EmergencyKit = decode(call { it.register(server, login, password, invite) })
@@ -210,12 +258,17 @@ class Vault(private val app: Application) {
             key.fill(0)
         }
         refresh()
+        withContext(Dispatchers.IO) { local.touch(lock.accountId, System.currentTimeMillis()) }
         onUnlocked()
     }
 
-    private fun afterPasswordUnlock() {
+    /** The master password was entered: the 14 days start again. */
+    private suspend fun afterPasswordUnlock() {
         passwordUnlockedThisRun = true
-        prefs.lastPasswordUnlockAt = System.currentTimeMillis()
+        withContext(Dispatchers.IO) {
+            val account = decode<LockState>(callNow { it.lockState() }).accountId
+            local.recordPasswordUnlock(account, System.currentTimeMillis())
+        }
         touch()
     }
 
@@ -239,6 +292,7 @@ class Vault(private val app: Application) {
         events.stop()
         QuickUnlock.clear(app)
         prefs.biometric = false
+        withContext(Dispatchers.IO) { local.forget() }
         passwordUnlockedThisRun = false
         refresh()
     }
@@ -430,7 +484,6 @@ class Vault(private val app: Application) {
     }.getOrNull()
 
     companion object {
-        const val QUICK_UNLOCK_MAX_AGE_MS = 14L * 24 * 3600 * 1000
         const val SYNC_INTERVAL_MS = 5L * 60 * 1000
     }
 }

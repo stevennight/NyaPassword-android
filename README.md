@@ -10,13 +10,13 @@ NyaPassword 的 Android 客户端：Kotlin + Jetpack Compose（Material 3，跟�
 | 模块 | 内容 |
 |---|---|
 | 登录 / 注册 | 服务器地址、账号、主密码、Secret Key；可扫描紧急恢复包二维码（内容 `{"v":1,"server","login","secret_key"}`，zxing 内置扫码，不依赖 Google Play 服务）；注册后显示紧急恢复包（含二维码） |
-| 解锁 | 主密码（离线可用）；指纹 / 面容（BiometricPrompt + Android Keystore AES-GCM 密钥，`setUserAuthenticationRequired`、新增生物特征即失效，包装核心的 quick unlock key）。只在本次进程里输入过主密码、且距上次输入主密码不超过 14 天时提供；密钥失效时清除并改用主密码 |
+| 解锁 | 主密码（离线可用）；指纹 / 面容（BiometricPrompt + Android Keystore AES-GCM 密钥，`setUserAuthenticationRequired`、新增生物特征即失效，包装核心的 quick unlock key；“启动时可直接用生物识别解锁”默认开，关掉则进程重启后第一次要主密码）；**PIN**（设置里设置 / 修改 / 删除，至少 4 个字符；核心用 `Argon2id(NFKD(PIN), 随机盐, 账户 KDF 参数)` 包装账户密钥，再由不可导出、不要求用户认证的 Keystore AES-GCM 密钥加密存在 no-backup 目录，有 StrongBox 用 StrongBox；每次尝试前先记次数，连续 5 次错误删除；输错后显示剩余次数）。生物识别和 PIN 都只在距上次在本机输入主密码不到 14 天时可用（时间戳和 PIN 在同一份 Keystore 加密的记录里，`core/LocalUnlock.kt`）；生物识别密钥失效时清除并改用主密码；在本机修改主密码后两者都被清除 |
 | 自动锁定 | 空闲 N 分钟（可设 1 分钟–4 小时或从不）、屏幕关闭时（可关）、进程重启 |
 | 密码库 | 搜索（核心搜索，支持拼音 / 首字母）、筛选（全部、收藏、冲突、保险库、分类、归档、回收站）、下拉同步 |
-| 使用前需要验证 | 条目设置了“使用前需要验证”（编辑页勾选；从 Bitwarden 导入的“主密码重新提示”自动转换）时：详情页验证前只显示标题、用户名和网址，显示 / 复制秘密、验证码、附件、通行密钥、历史版本和编辑都要先验证（指纹 / 面容或主密码；验证只对当前打开的条目有效，换条目或锁定后失效）；自动填充建议里不带值，选中后先验证再填写；“搜索 NyaPassword”选中、保存提示里“更新”也先验证。说明见 [威胁模型.md](../common/docs/威胁模型.md) §3.8.1 |
+| 使用前需要验证 | 条目设置了“使用前需要验证”（编辑页勾选；从 Bitwarden 导入的“主密码重新提示”自动转换）时：详情页验证前只显示标题、用户名和网址，显示 / 复制秘密、验证码、附件、通行密钥、历史版本和编辑都要先验证（指纹 / 面容、PIN 或主密码；验证只对当前打开的条目有效，换条目或锁定后失效）；自动填充建议里不带值，选中后先验证再填写；“搜索 NyaPassword”选中、保存提示里“更新”也先验证。说明见 [威胁模型.md](../common/docs/威胁模型.md) §3.8.1 |
 | 条目详情 | 复制（Android 13+ 标记敏感内容 `EXTRA_IS_SENSITIVE`，更早版本 `android.content.extra.IS_SENSITIVE`；90 秒后清除）、显示 / 隐藏、TOTP 实时验证码与倒计时、多行密文按行复制、网址、通行密钥、附件下载（系统文件选择器）、历史版本查看 / 恢复、密码历史、同步冲突逐项处理、回收站恢复 / 永久删除 |
 | 编辑 | 全部模板、添加字段（含多行密文和预设：恢复码、密保问题等）、分区、网址与匹配方式、标签、备注、生成器、附件上传；**条目内容按 JSON 树编辑，新版本客户端写入的未知字段原样保留** |
-| 其他页面 | 密码生成器（随机 / 易记口令 / PIN）、安全检查（弱密码、重复、可开两步验证、长期未改、http）与健康检查、设置（自动锁定、生物识别、设备列表与移除、紧急恢复包、修改主密码、保险库、退出、关于与更新） |
+| 其他页面 | 密码生成器（随机 / 易记口令 / PIN）、安全检查（弱密码、重复、可开两步验证、长期未改、http）与健康检查、设置（自动锁定、生物识别与启动时生物识别、PIN、设备列表与移除、紧急恢复包、修改主密码、保险库、退出、关于与更新） |
 | 同步 | 回到前台时、前台每 5 分钟、编辑后，以及前台时连接事件 WebSocket（OkHttp）收到通知即同步；设备被移除时自动退出 |
 | 自动填充 | AutofillService（不使用无障碍服务）：解析 AssistStructure（autofillHints、HTML autocomplete / type、inputType、中英文关键词：账号 / 用户名 / 手机号 / 邮箱 / 密码 / 验证码…）；浏览器按页面域名匹配（浏览器先按签名证书核对，见下），应用按 `androidapp://包名` 匹配；锁定时返回“点按解锁”，解锁后直接给出候选；Android 11+ 输入法内联建议；保存新密码 / 更新密码；没有匹配时“搜索 NyaPassword”，选中后把应用（包名 + 签名证书 SHA-256）记到条目里，之后对 `androidapp://` 网址核对调用方签名证书，防冒名应用 |
 | 凭据提供程序 | Android 14+ CredentialProviderService（androidx.credentials）：密码和通行密钥的登录与注册。选择条目后先验证身份（生物识别或主密码，即使已解锁），再由核心签名 / 创建。特权浏览器（Chrome、Edge、Brave、Samsung Internet 等，名单 `app/src/main/assets/privileged_browsers.json` 摘自 Google 的 [privileged apps](https://www.gstatic.com/gpm-passkeys-privileged-apps/apps.json)）用浏览器给出的 origin（有 clientDataHash 时由浏览器生成 clientDataJSON）；普通应用用 `android:apk-key-hash:<证书 SHA-256>`，并要求网站的 Digital Asset Links 授权该应用 |
@@ -66,5 +66,5 @@ Gradle 任务顺序：`cargoBuild`（`cargo ndk -t arm64-v8a -t x86_64 --platfor
 
 ## 测试情况
 
-- 已验证：`cargo test -p npw-ffi`（含对本机服务端的端到端测试）、`cargo ndk` 两个 ABI 构建、`gradlew lintDebug testDebugUnitTest assembleDebug`；JVM 单元测试覆盖表单字段识别、JSON 树编辑保留未知键、版本比较与发布解析、应用 origin / 特权浏览器 / Digital Asset Links、恢复包二维码、“使用前需要验证”的规则与 JSON。
-- **未测试**：真机、模拟器、国内 ROM（MIUI / HyperOS、ColorOS、OriginOS、HarmonyOS 4）、具体浏览器（Chrome、Edge、国内浏览器的兼容模式）、各 App 的自动填充、通行密钥在真实网站上的注册与登录、输入法内联建议、自更新安装流程、“使用前需要验证”的界面（详情页验证、BiometricPrompt、自动填充数据集认证）。上线前按设计方案 §11 的测试矩阵逐项实测。
+- 已验证：`cargo test -p npw-ffi`（含对本机服务端的端到端测试）、`cargo ndk` 两个 ABI 构建、`gradlew lintDebug testDebugUnitTest assembleDebug`；JVM 单元测试覆盖表单字段识别、JSON 树编辑保留未知键、版本比较与发布解析、应用 origin / 特权浏览器 / Digital Asset Links、恢复包二维码、“使用前需要验证”的规则与 JSON、14 天规则与时钟回拨、PIN 尝试次数（先计数再尝试、5 次删除、成功清零）。
+- **未测试**：真机、模拟器、国内 ROM（MIUI / HyperOS、ColorOS、OriginOS、HarmonyOS 4）、具体浏览器（Chrome、Edge、国内浏览器的兼容模式）、各 App 的自动填充、通行密钥在真实网站上的注册与登录、输入法内联建议、自更新安装流程、“使用前需要验证”的界面（详情页验证、BiometricPrompt、自动填充数据集认证）、PIN 与启动时生物识别的界面、Keystore / StrongBox 上的 `GuardFile`。上线前按设计方案 §11 的测试矩阵逐项实测。

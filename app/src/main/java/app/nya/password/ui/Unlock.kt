@@ -27,6 +27,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -48,7 +49,9 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import app.nya.password.core.CoreFailure
+import app.nya.password.core.LocalUnlock
 import app.nya.password.core.QuickUnlock
+import app.nya.password.core.Stale
 import app.nya.password.core.Vault
 import app.nya.password.core.errorText
 import app.nya.password.vault
@@ -172,9 +175,9 @@ object Biometrics {
 }
 
 /**
- * Master password (and biometrics when offered). [verify]: the vault may be
- * unlocked already, the user must still prove it is them (passkeys,
- * credential requests).
+ * Master password, the PIN and biometrics (when offered: 14-day rule). [verify]:
+ * the vault may be unlocked already, the user must still prove it is them
+ * (passkeys, credential requests, "使用前需要验证").
  */
 @Composable
 fun UnlockPanel(
@@ -190,6 +193,9 @@ fun UnlockPanel(
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf("") }
     val bio = v.quickUnlockOffered() && Biometrics.available(activity)
+    var pin by remember { mutableStateOf(v.pinStatus()) }
+    /** The field takes the PIN instead of the master password (the PIN is the default when set). */
+    var usePin by remember { mutableStateOf(pin.usable) }
     val focus = remember { FocusRequester() }
 
     fun submit() {
@@ -198,11 +204,24 @@ fun UnlockPanel(
         error = ""
         scope.launch {
             try {
-                if (verify) v.verifyPassword(password) else v.unlock(password)
+                when {
+                    usePin && verify -> v.verifyPin(password)
+                    usePin -> v.unlockWithPin(password)
+                    verify -> v.verifyPassword(password)
+                    else -> v.unlock(password)
+                }
                 password = ""
                 onDone()
             } catch (e: Exception) {
                 error = errorText(e)
+                if (usePin) {
+                    // tries left, or a deleted / suspended PIN: back to the master password
+                    pin = v.pinStatus()
+                    if (!pin.usable) {
+                        usePin = false
+                        password = ""
+                    }
+                }
             } finally {
                 busy = false
             }
@@ -218,6 +237,12 @@ fun UnlockPanel(
         if (bio) biometric() else runCatching { focus.requestFocus() }
     }
 
+    val triesHint: (@Composable () -> Unit)? = if (usePin && pin.triesLeft < LocalUnlock.PIN_MAX_TRIES) {
+        { Text("还可以再试 ${pin.triesLeft} 次，之后 PIN 作废") }
+    } else {
+        null
+    }
+
     Column(
         Modifier.widthIn(max = 420.dp).fillMaxWidth().padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -231,7 +256,8 @@ fun UnlockPanel(
             password,
             { password = it },
             Modifier.fillMaxWidth().focusRequester(focus),
-            label = { Text("主密码") },
+            label = { Text(if (usePin) "PIN" else "主密码") },
+            supportingText = triesHint,
             singleLine = true,
             enabled = !busy,
             visualTransformation = PasswordVisualTransformation(),
@@ -251,6 +277,18 @@ fun UnlockPanel(
                 Icon(Icons.Filled.Fingerprint, null, Modifier.size(18.dp))
                 Spacer(Modifier.width(6.dp))
                 Text("使用指纹 / 面容")
+            }
+        }
+        if (pin.usable) {
+            TextButton(onClick = {
+                usePin = !usePin
+                password = ""
+                error = ""
+            }) { Text(if (usePin) "改用主密码" else "使用 PIN") }
+        }
+        if (!usePin && (v.prefs.biometric || pin.set)) {
+            v.quickUnlockBlocked()?.takeIf { it != Stale.RESTARTED || !pin.usable }?.let {
+                Text(it.message, color = muted, fontSize = 12.sp, textAlign = TextAlign.Center)
             }
         }
         if (error.isNotEmpty()) Banner(error, error = true)

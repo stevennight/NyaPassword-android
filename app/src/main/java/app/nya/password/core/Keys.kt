@@ -72,11 +72,77 @@ object DeviceKey {
 }
 
 /**
+ * The unlock guard of [LocalUnlock] (the time of the last master-password
+ * unlock, the PIN blob and its try count): a file in no-backup storage,
+ * encrypted and authenticated with a non-exportable Android Keystore AES-GCM
+ * key (StrongBox when the phone has one; no user authentication: the PIN is
+ * checked by the core). A copied file is useless elsewhere, so the PIN cannot
+ * be guessed offline from it; an edited file fails to open and reads as
+ * empty (the master password is needed).
+ */
+class GuardFile(context: Context) : GuardStore {
+    private val file = File(context.noBackupFilesDir, FILE)
+    private val tmp = File(context.noBackupFilesDir, "$FILE.tmp")
+
+    companion object {
+        private const val ALIAS = "npw_unlock_guard"
+        private const val FILE = "unlock_guard.bin"
+        private val AAD = "npw/android/unlock-guard/v1".toByteArray()
+    }
+
+    override fun load(): ByteArray? {
+        if (!file.exists()) return null
+        val key = keyStore().getKey(ALIAS, null) as? SecretKey ?: return null
+        val (iv, ct) = unpack(file.readBytes())
+        val c = Cipher.getInstance(GCM)
+        c.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(128, iv))
+        c.updateAAD(AAD)
+        return c.doFinal(ct)
+    }
+
+    override fun save(data: ByteArray) {
+        val c = Cipher.getInstance(GCM)
+        c.init(Cipher.ENCRYPT_MODE, key())
+        c.updateAAD(AAD)
+        tmp.writeBytes(pack(c.iv, c.doFinal(data)))
+        if (!tmp.renameTo(file)) {
+            file.delete()
+            check(tmp.renameTo(file)) { "cannot write $FILE" }
+        }
+    }
+
+    override fun delete() {
+        file.delete()
+        runCatching { keyStore().deleteEntry(ALIAS) }
+    }
+
+    private fun key(): SecretKey {
+        (keyStore().getKey(ALIAS, null) as? SecretKey)?.let { return it }
+        fun generate(strongBox: Boolean): SecretKey {
+            val b = KeyGenParameterSpec.Builder(ALIAS, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
+                .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+                .setKeySize(256)
+            if (strongBox && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) b.setIsStrongBoxBacked(true)
+            val g = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, KEYSTORE)
+            g.init(b.build())
+            return g.generateKey()
+        }
+        return try {
+            generate(strongBox = true)
+        } catch (e: Exception) {
+            // no StrongBox on this phone (StrongBoxUnavailableException): the TEE-backed Keystore
+            generate(strongBox = false)
+        }
+    }
+}
+
+/**
  * Biometric quick unlock (design doc §4.5): the core's quick-unlock key,
  * encrypted with a Keystore key that needs a biometric for every use and is
- * invalidated when fingerprints or faces are added. Offered only after a
- * master-password unlock in the same process run and within 14 days of the
- * last one (see [Vault.quickUnlockOffered]).
+ * invalidated when fingerprints or faces are added. Offered within 14 days of
+ * the last master-password unlock; after an app restart only when
+ * "启动时可直接用生物识别解锁" is on (see [Vault.quickUnlockOffered]).
  */
 object QuickUnlock {
     private const val ALIAS = "npw_quick_unlock"

@@ -86,6 +86,10 @@ fun SettingsScreen(activity: MainActivity, pad: PaddingValues) {
     var rename by remember { mutableStateOf<Pair<String, String>?>(null) }
     var autofillOn by remember { mutableStateOf(autofillEnabled(activity)) }
     val bioAvailable = remember { Biometrics.available(activity) }
+    var atStart by remember { mutableStateOf(v.prefs.biometricAtStart) }
+    var pinState by remember { mutableStateOf(v.pinStatus()) }
+    var pinDialog by remember { mutableStateOf(false) }
+    var removePin by remember { mutableStateOf(false) }
 
     // the autofill status changes in system settings
     val owner = LocalLifecycleOwner.current
@@ -134,7 +138,7 @@ fun SettingsScreen(activity: MainActivity, pad: PaddingValues) {
             if (bioAvailable) {
                 SwitchField(
                     "使用指纹 / 面容解锁",
-                    "应用重启后、或距上次输入主密码超过 14 天时，仍需主密码；新增指纹后自动失效",
+                    "每 14 天仍需输入一次主密码；新增指纹 / 面容后自动失效",
                     checked = bio,
                 ) { on ->
                     if (on) {
@@ -152,8 +156,31 @@ fun SettingsScreen(activity: MainActivity, pad: PaddingValues) {
                         bio = false
                     }
                 }
+                if (bio) {
+                    SwitchField(
+                        "启动时可直接用生物识别解锁",
+                        "关闭后，应用重启后第一次解锁需要主密码",
+                        checked = atStart,
+                    ) { on ->
+                        atStart = on
+                        v.prefs.biometricAtStart = on
+                    }
+                }
             } else {
                 Field("指纹 / 面容解锁", "这台设备没有可用的强生物识别（或尚未录入）")
+            }
+            Field(
+                "PIN 解锁",
+                if (pinState.set) {
+                    "已设置 · 至少 4 个字符，连续输错 5 次作废；每 14 天仍需输入一次主密码；也可用于“使用前需要验证”"
+                } else {
+                    "至少 4 个字符（任意字符），连续输错 5 次作废；只保存在这台手机上（硬件 Keystore 保护）"
+                },
+            ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    if (pinState.set) TextButton(onClick = { removePin = true }) { Text("删除", color = MaterialTheme.colorScheme.error) }
+                    OutlinedButton(onClick = { pinDialog = true }) { Text(if (pinState.set) "修改" else "设置") }
+                }
             }
             Row(Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
                 OutlinedButton(onClick = { v.lock() }) { Text("立即锁定") }
@@ -259,7 +286,29 @@ fun SettingsScreen(activity: MainActivity, pad: PaddingValues) {
             dismissButton = { TextButton(onClick = { rename = null }) { Text("取消") } },
         )
     }
-    if (changePw) ChangePasswordDialog(activity) { changePw = false }
+    if (changePw) {
+        ChangePasswordDialog(activity) {
+            changePw = false
+            bio = v.prefs.biometric
+            pinState = v.pinStatus()
+        }
+    }
+    if (pinDialog) {
+        PinDialog(activity, change = pinState.set) {
+            pinDialog = false
+            pinState = v.pinStatus()
+        }
+    }
+    if (removePin) {
+        ConfirmDialog("删除 PIN？", "之后只能用主密码或生物识别解锁。", "删除", true, { removePin = false }) {
+            removePin = false
+            act {
+                v.removePin()
+                pinState = v.pinStatus()
+                v.say("PIN 已删除")
+            }
+        }
+    }
     if (signOut) {
         val pending = v.attention.second
         ConfirmDialog(
@@ -312,7 +361,10 @@ private fun ChangePasswordDialog(activity: MainActivity, onClose: () -> Unit) {
                 scope.launch {
                     try {
                         v.call { it.changePassword(cur, next) }
-                        v.say("主密码已修改；其他设备需要用新密码重新登录")
+                        val cleared = v.prefs.biometric || v.pinStatus().set
+                        // a new master password: biometrics and the PIN are set up again
+                        v.afterPasswordChange()
+                        v.say("主密码已修改；其他设备需要用新密码重新登录" + if (cleared) "。本机的指纹 / 面容和 PIN 解锁已清除，请重新设置" else "")
                         onClose()
                     } catch (e: Exception) {
                         msg = errorText(e)
@@ -321,6 +373,55 @@ private fun ChangePasswordDialog(activity: MainActivity, onClose: () -> Unit) {
                     }
                 }
             }) { Text(if (busy) "请稍候…" else "修改") }
+        },
+        dismissButton = { TextButton(onClick = onClose) { Text("取消") } },
+    )
+}
+
+/** Sets or changes the PIN (twice, at least 4 characters). */
+@Composable
+private fun PinDialog(activity: MainActivity, change: Boolean, onClose: () -> Unit) {
+    val v = activity.vault
+    val scope = rememberCoroutineScope()
+    var pin1 by remember { mutableStateOf("") }
+    var pin2 by remember { mutableStateOf("") }
+    var msg by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    AlertDialog(
+        onDismissRequest = onClose,
+        title = { Text(if (change) "修改 PIN" else "设置 PIN") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(Triple("新 PIN", pin1) { s: String -> pin1 = s }, Triple("再输一次 PIN", pin2) { s: String -> pin2 = s })
+                    .forEach { (label, value, set) ->
+                        OutlinedTextField(
+                            value, set, label = { Text(label) }, singleLine = true, enabled = !busy,
+                            visualTransformation = PasswordVisualTransformation(),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                        )
+                    }
+                if (msg.isNotEmpty()) Text(msg, color = MaterialTheme.colorScheme.error, fontSize = 13.sp)
+                Text("PIN 只保存在这台手机上，忘记时用主密码解锁即可。", fontSize = 12.sp, color = muted)
+            }
+        },
+        confirmButton = {
+            TextButton(enabled = !busy && pin1.isNotEmpty(), onClick = {
+                msg = ""
+                if (!app.nya.password.core.LocalUnlock.pinValid(pin1)) return@TextButton run { msg = "PIN 至少 4 个字符（任意字符）" }
+                if (pin1 != pin2) return@TextButton run { msg = "两次输入的 PIN 不一致" }
+                busy = true
+                scope.launch {
+                    try {
+                        v.setPin(pin1)
+                        v.say(if (change) "PIN 已修改" else "PIN 已设置")
+                        onClose()
+                    } catch (e: Exception) {
+                        msg = errorText(e)
+                    } finally {
+                        busy = false
+                    }
+                }
+            }) { Text(if (busy) "请稍候…" else "保存") }
         },
         dismissButton = { TextButton(onClick = onClose) { Text("取消") } },
     )

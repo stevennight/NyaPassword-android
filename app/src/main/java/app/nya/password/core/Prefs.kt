@@ -27,9 +27,14 @@ class Prefs(context: Context) {
         get() = p.getBoolean("biometric", false)
         set(v) = p.edit { putBoolean("biometric", v) }
 
-    var lastPasswordUnlockAt: Long
-        get() = p.getLong("last_password_unlock_at", 0)
-        set(v) = p.edit { putLong("last_password_unlock_at", v) }
+    /**
+     * "启动时可直接用生物识别解锁" (on by default). The time of the last
+     * master-password unlock is not here but in the Keystore-sealed guard
+     * ([LocalUnlock], [GuardFile]): editing preferences must not extend the 14 days.
+     */
+    var biometricAtStart: Boolean
+        get() = p.getBoolean("biometric_at_start", true)
+        set(v) = p.edit { putBoolean("biometric_at_start", v) }
 
     var checkUpdates: Boolean
         get() = p.getBoolean("check_updates", true)
