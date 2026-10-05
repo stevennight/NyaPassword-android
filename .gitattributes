@@ -1,3 +1,9 @@
+# LF in the repository and working tree (same as the other NyaPassword repositories).
+* text=auto eol=lf
+*.jar binary
+*.png binary
+*.webp binary
 # The Gradle wrapper script is executed on Linux CI runners; keep LF.
 gradlew text eol=lf
 *.bat text eol=crlf
+*.ps1 text eol=crlf
