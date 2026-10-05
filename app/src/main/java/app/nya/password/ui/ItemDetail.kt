@@ -71,6 +71,7 @@ import app.nya.password.core.Content
 import app.nya.password.core.ItemField
 import app.nya.password.core.ItemDoc
 import app.nya.password.core.ItemView
+import app.nya.password.core.Reprompt
 import app.nya.password.core.RevisionInfo
 import app.nya.password.core.Vault
 import app.nya.password.core.decode
@@ -125,6 +126,8 @@ fun ItemDetailScreen(activity: MainActivity, vaultId: String, itemId: String) {
     var conflicts by remember { mutableStateOf(false) }
     var saving by remember { mutableStateOf<Pair<String, String>?>(null) }
 
+    // opening this item ends a verification of another one ("使用前需要验证")
+    LaunchedEffect(vaultId, itemId) { v.opened(vaultId, itemId) }
     LaunchedEffect(v.version) {
         view = runCatching { v.item(vaultId, itemId) }.getOrElse {
             missing = true
@@ -158,6 +161,8 @@ fun ItemDetailScreen(activity: MainActivity, vaultId: String, itemId: String) {
     }
     val c = remember(item) { item.content?.let { Content.of(it) } } ?: return
     val tpl = remember { v.templatesNow() }.find { it.id == item.template }
+    // secrets, copying, history and editing stay hidden until the user verifies
+    val locked = v.gated(item.reprompt, vaultId, itemId)
 
     fun act(block: suspend () -> Unit) {
         scope.launch {
@@ -183,8 +188,10 @@ fun ItemDetailScreen(activity: MainActivity, vaultId: String, itemId: String) {
                 IconButton(onClick = { toggle("favorite") }) {
                     Icon(if (c.favorite) Icons.Filled.Star else Icons.Filled.StarBorder, "收藏", tint = if (c.favorite) Warn else muted)
                 }
-                IconButton(onClick = { activity.open(Route.Edit(vaultId, itemId, item.template)) }, enabled = !item.readOnly) {
-                    Icon(Icons.Filled.Edit, "编辑")
+                if (!locked) {
+                    IconButton(onClick = { activity.open(Route.Edit(vaultId, itemId, item.template)) }, enabled = !item.readOnly) {
+                        Icon(Icons.Filled.Edit, "编辑")
+                    }
                 }
             }
             IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, "更多") }
@@ -201,7 +208,7 @@ fun ItemDetailScreen(activity: MainActivity, vaultId: String, itemId: String) {
                     DropdownMenuItem({ Text("永久删除", color = MaterialTheme.colorScheme.error) }, onClick = { menu = false; confirm = "purge" })
                 } else {
                     DropdownMenuItem({ Text(if (c.archived) "取消归档" else "归档") }, onClick = { menu = false; toggle("archived") })
-                    DropdownMenuItem({ Text("历史版本") }, onClick = { menu = false; history = true })
+                    if (!locked) DropdownMenuItem({ Text("历史版本") }, onClick = { menu = false; history = true })
                     DropdownMenuItem({ Text("移到回收站", color = MaterialTheme.colorScheme.error) }, onClick = { menu = false; confirm = "delete" })
                 }
             }
@@ -228,12 +235,25 @@ fun ItemDetailScreen(activity: MainActivity, vaultId: String, itemId: String) {
             item.rejected?.let { Banner("服务器拒绝了对这个条目的修改：$it。你的修改仍保存在本设备上。", error = true) }
             if (c.conflicts.isNotEmpty()) {
                 Banner("同步冲突：${c.conflicts.size} 处在不同设备上被改成了不同的值。两个值都已保留，请选择要用哪个。") {
-                    TextButton(onClick = { conflicts = true }) { Text("逐项处理") }
+                    if (!locked) TextButton(onClick = { conflicts = true }) { Text("逐项处理") }
                 }
             }
 
+            if (locked) {
+                UnlockPanel(activity, "此条目需要验证", "查看、复制这个条目的密码等内容前，请验证身份", verify = true) {
+                    v.verifiedItem = Reprompt.key(vaultId, itemId)
+                }
+                if (item.subtitle.isNotBlank()) Group { Field(item.subtitle, "摘要", divider = false) }
+                val hidden = listOfNotNull(
+                    "通行密钥 ${c.passkeys.size} 个".takeIf { c.passkeys.isNotEmpty() },
+                    "附件 ${c.attachments.size} 个".takeIf { c.attachments.isNotEmpty() },
+                    "备注".takeIf { c.notes.isNotEmpty() },
+                )
+                if (hidden.isNotEmpty()) Text("${hidden.joinToString(" · ")}：验证后显示", fontSize = 12.5.sp, color = muted)
+            }
+
             // fields, grouped by section
-            val visible = c.fields.filter { !it.isEmpty }
+            val visible = if (locked) emptyList() else c.fields.filter { !it.isEmpty }
             val known = c.sections.map { it.id }.toSet()
             val groups = buildList {
                 add("" to visible.filter { it.section == null })
@@ -246,7 +266,7 @@ fun ItemDetailScreen(activity: MainActivity, vaultId: String, itemId: String) {
                 }
             }
 
-            if (c.passkeys.isNotEmpty()) {
+            if (c.passkeys.isNotEmpty() && !locked) {
                 Group(title = "通行密钥") {
                     c.passkeys.forEach { p ->
                         Field(p.rpId, listOf(p.userName.ifEmpty { p.userDisplayName }, p.createdAt.takeIf { it > 0 }?.let { "创建于 ${dateTime(it)}" }).filterNotNull().filter { it.isNotEmpty() }.joinToString(" · ")) {
@@ -277,13 +297,13 @@ fun ItemDetailScreen(activity: MainActivity, vaultId: String, itemId: String) {
                 }
             }
 
-            if (c.notes.isNotEmpty()) {
+            if (c.notes.isNotEmpty() && !locked) {
                 Group(title = "备注") {
                     Text(c.notes, Modifier.padding(16.dp), fontSize = 14.5.sp)
                 }
             }
 
-            if (c.attachments.isNotEmpty()) {
+            if (c.attachments.isNotEmpty() && !locked) {
                 Group(title = "附件") {
                     c.attachments.forEach { a ->
                         Field("📎 ${a.name}", bytes(a.size)) {
@@ -300,11 +320,15 @@ fun ItemDetailScreen(activity: MainActivity, vaultId: String, itemId: String) {
                 Text("修改于 ${dateTime(c.updatedAt)}", fontSize = 12.sp, color = muted)
                 Text("创建于 ${dateTime(c.createdAt)}", fontSize = 12.sp, color = muted)
                 if (item.pending) Chip("尚未同步")
-                Text(
-                    "历史版本${if (item.revision > 0) "（${item.revision}）" else ""}",
-                    Modifier.clickable { history = true },
-                    fontSize = 12.sp, color = MaterialTheme.colorScheme.primary,
-                )
+                if (locked) {
+                    Chip("使用前需要验证")
+                } else {
+                    Text(
+                        "历史版本${if (item.revision > 0) "（${item.revision}）" else ""}",
+                        Modifier.clickable { history = true },
+                        fontSize = 12.sp, color = MaterialTheme.colorScheme.primary,
+                    )
+                }
                 if (c.history.isNotEmpty()) Text("密码历史 ${c.history.size} 条", fontSize = 12.sp, color = muted)
                 Text("格式 ${c.format}", fontSize = 12.sp, color = muted)
             }
@@ -330,8 +354,8 @@ fun ItemDetailScreen(activity: MainActivity, vaultId: String, itemId: String) {
             }
         }
     }
-    if (history) HistoryDialog(v, vaultId, itemId, c) { history = false }
-    if (conflicts) ConflictsDialog(v, vaultId, itemId, c) { conflicts = false }
+    if (history && !locked) HistoryDialog(v, vaultId, itemId, c) { history = false }
+    if (conflicts && !locked) ConflictsDialog(v, vaultId, itemId, c) { conflicts = false }
 }
 
 /** One field: label, value (hidden for secrets), reveal / copy, per-line copy for multi-line secrets, live TOTP. */

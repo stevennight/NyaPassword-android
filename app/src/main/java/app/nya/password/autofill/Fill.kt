@@ -147,6 +147,36 @@ object Fill {
         return InlinePresentation(slice, spec, false)
     }
 
+    /** The fields a dataset of this item fills (username, password, one-time code). */
+    fun fillIds(screen: ParsedScreen, c: Content): List<android.view.autofill.AutofillId> = buildList {
+        if (c.username != null) addAll(screen.idsOf(Role.USERNAME))
+        if (c.password != null) addAll(screen.idsOf(Role.PASSWORD))
+        if (c.totp != null) addAll(screen.idsOf(Role.OTP))
+    }
+
+    /**
+     * A dataset of an item marked "使用前需要验证": it carries no values; picking
+     * it opens [AutofillActivity] to verify the user (biometrics / master
+     * password), which then returns the real [dataset].
+     */
+    fun guardedDataset(
+        context: Context,
+        screen: ParsedScreen,
+        item: ItemView,
+        c: Content,
+        target: FillTarget,
+        inline: InlinePresentation?,
+    ): Dataset? {
+        val ids = fillIds(screen, c)
+        if (ids.isEmpty()) return null
+        val p = presentation(context, item.title.ifBlank { "（无标题）" }, "${c.username ?: item.subtitle} · 需要验证".trimStart(' ', '·'), R.drawable.ic_autofill_lock)
+        val b = Dataset.Builder(p)
+        ids.forEach { b.setValue(it, null, p) }
+        b.setAuthentication(AutofillActivity.repromptSender(context, target, item.vaultId, item.itemId))
+        if (inline != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) b.setInlinePresentation(inline)
+        return b.build()
+    }
+
     /** One dataset filling the item's username / password / one-time code. */
     fun dataset(
         context: Context,
@@ -200,11 +230,12 @@ object Fill {
         fun spec(i: Int): InlinePresentationSpec? = specs?.let { if (it.isEmpty()) null else it[minOf(i, it.size - 1)] }
         for ((v, c) in candidates(vault, target)) {
             val inl = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                inline(context, spec(count), v.title.ifBlank { "（无标题）" }, c.username)
+                inline(context, spec(count), v.title.ifBlank { "（无标题）" }, c.username, if (v.reprompt) R.drawable.ic_autofill_lock else R.drawable.ic_autofill_key)
             } else {
                 null
             }
-            dataset(context, screen, v, c, inl)?.let {
+            val ds = if (v.reprompt) guardedDataset(context, screen, v, c, target, inl) else dataset(context, screen, v, c, inl)
+            ds?.let {
                 r.addDataset(it)
                 count++
             }

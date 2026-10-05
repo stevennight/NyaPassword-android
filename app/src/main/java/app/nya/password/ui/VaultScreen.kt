@@ -22,6 +22,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Sync
@@ -229,6 +230,7 @@ fun ItemRow(item: ItemView, onClick: () -> Unit) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(item.title.ifBlank { "（无标题）" }, fontSize = 15.5.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
                 if (item.favorite) Icon(Icons.Filled.Star, "收藏", Modifier.padding(start = 4.dp).size(14.dp), tint = Warn)
+                if (item.reprompt) Icon(Icons.Filled.Lock, "使用前需要验证", Modifier.padding(start = 4.dp).size(13.dp), tint = muted)
             }
             val sub = item.subtitle.ifBlank { item.urls.firstOrNull()?.let { app.nya.password.ffi.displayHost(it) } ?: "" }
             if (sub.isNotEmpty()) Text(sub, fontSize = 13.sp, color = muted, maxLines = 1, overflow = TextOverflow.Ellipsis)

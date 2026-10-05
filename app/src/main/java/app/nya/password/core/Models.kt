@@ -63,6 +63,8 @@ data class ItemView(
     val subtitle: String = "",
     val favorite: Boolean = false,
     val archived: Boolean = false,
+    /** "使用前需要验证": verify (biometrics / master password) before secrets are shown, copied or filled. */
+    val reprompt: Boolean = false,
     val deleted: Boolean = false,
     val tags: List<String> = emptyList(),
     val urls: List<String> = emptyList(),
@@ -161,6 +163,7 @@ data class PasskeyCandidate(
     val rpId: String = "",
     val userName: String = "",
     val userDisplayName: String = "",
+    val reprompt: Boolean = false,
 )
 
 @Serializable
@@ -251,6 +254,7 @@ data class Content(
     val title: String = "",
     val favorite: Boolean = false,
     val archived: Boolean = false,
+    val reprompt: Boolean = false,
     val tags: List<String> = emptyList(),
     val fields: List<ItemField> = emptyList(),
     val sections: List<Section> = emptyList(),

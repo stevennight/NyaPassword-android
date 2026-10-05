@@ -71,6 +71,9 @@ class Vault(private val app: Application) {
     /** Shown once after registration. */
     var newKit by mutableStateOf<EmergencyKit?>(null)
 
+    /** The item verified for "使用前需要验证" ([Reprompt.key]), while it stays open; cleared on lock. */
+    var verifiedItem by mutableStateOf<String?>(null)
+
     private val _messages = MutableSharedFlow<String>(extraBufferCapacity = 16)
     /** Short messages for a snackbar / toast. */
     val messages: SharedFlow<String> = _messages
@@ -181,6 +184,25 @@ class Vault(private val app: Application) {
         }
     }
 
+    /** Checks a key released by biometrics against the unlocked account (user verification). */
+    suspend fun verifyKey(key: ByteArray) {
+        try {
+            call { it.verifyKey(key) }
+        } finally {
+            key.fill(0)
+        }
+        touch()
+    }
+
+    /** An item was opened: a verification of another item ends. */
+    fun opened(vaultId: String, itemId: String) {
+        verifiedItem = Reprompt.afterOpen(verifiedItem, vaultId, itemId)
+    }
+
+    /** The item's secrets stay hidden until the user verifies. */
+    fun gated(reprompt: Boolean, vaultId: String, itemId: String): Boolean =
+        Reprompt.gated(reprompt, vaultId, itemId, verifiedItem)
+
     suspend fun unlockWithKey(key: ByteArray) {
         try {
             call { it.unlockWithKey(key) }
@@ -203,6 +225,7 @@ class Vault(private val app: Application) {
     }
 
     fun lock() {
+        verifiedItem = null
         runCatching { callNow { it.lock() } }
         events.stop()
         foregroundJob?.cancel()

@@ -57,6 +57,7 @@ import androidx.compose.ui.unit.sp
 import app.nya.password.MainActivity
 import app.nya.password.core.ItemDoc
 import app.nya.password.core.PlainJson
+import app.nya.password.core.Reprompt
 import app.nya.password.core.errorText
 import app.nya.password.ffi.fieldPresets
 import app.nya.password.ffi.newShortId
@@ -96,11 +97,15 @@ fun EditorScreen(activity: MainActivity, vaultId: String, itemId: String?, templ
     var removeAsk by remember { mutableStateOf<Pair<String, String>?>(null) }
     val reveal = remember { mutableStateMapOf<String, Boolean>() }
     var savedId by remember { mutableStateOf(itemId) }
+    /** The saved item asks for verification ("使用前需要验证"); editing shows its secrets. */
+    var savedReprompt by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         try {
             val d = if (itemId != null) {
-                ItemDoc(v.item(vaultId, itemId).content ?: error("no content"))
+                val view = v.item(vaultId, itemId)
+                savedReprompt = view.reprompt
+                ItemDoc(view.content ?: error("no content"))
             } else {
                 val n = ItemDoc(v.call { it.newItem(template) })
                 if (template == "login") n.with("urls", JsonArray(emptyList())) else n
@@ -180,6 +185,14 @@ fun EditorScreen(activity: MainActivity, vaultId: String, itemId: String?, templ
             Button(onClick = { scope.launch { save(close = true) } }, enabled = !busy && d != null, modifier = Modifier.padding(end = 8.dp)) { Text("保存") }
         }
         if (d == null) return@Column
+        if (itemId != null && v.gated(savedReprompt, vaultId, itemId)) {
+            Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally) {
+                UnlockPanel(activity, "此条目需要验证", "编辑这个条目前，请验证身份", verify = true) {
+                    v.verifiedItem = Reprompt.key(vaultId, itemId)
+                }
+            }
+            return@Column
+        }
         Column(
             Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 40.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -265,6 +278,17 @@ fun EditorScreen(activity: MainActivity, vaultId: String, itemId: String?, templ
                     Checkbox(d.autofillNever, { b -> edit { it.withAutofillNever(b) } })
                     Text("不要自动填充这个条目", fontSize = 13.sp)
                 }
+            }
+
+            Group(title = "使用前验证") {
+                Row(Modifier.padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(d.reprompt, { b -> edit { it.withReprompt(b) } })
+                    Text("使用前需要验证（主密码 / Windows Hello / 指纹）", fontSize = 13.sp)
+                }
+                Text(
+                    "查看、复制、自动填充这个条目的密码等内容前，都要再次验证身份。防的是别人趁你离开时使用已解锁的手机；条目的加密方式不变。",
+                    Modifier.padding(start = 16.dp, end = 16.dp, bottom = 10.dp), fontSize = 12.sp, color = muted,
+                )
             }
 
             val passkeys = d.array("passkeys")

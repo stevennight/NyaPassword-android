@@ -13,6 +13,7 @@ NyaPassword 的 Android 客户端：Kotlin + Jetpack Compose（Material 3，跟�
 | 解锁 | 主密码（离线可用）；指纹 / 面容（BiometricPrompt + Android Keystore AES-GCM 密钥，`setUserAuthenticationRequired`、新增生物特征即失效，包装核心的 quick unlock key）。只在本次进程里输入过主密码、且距上次输入主密码不超过 14 天时提供；密钥失效时清除并改用主密码 |
 | 自动锁定 | 空闲 N 分钟（可设 1 分钟–4 小时或从不）、屏幕关闭时（可关）、进程重启 |
 | 密码库 | 搜索（核心搜索，支持拼音 / 首字母）、筛选（全部、收藏、冲突、保险库、分类、归档、回收站）、下拉同步 |
+| 使用前需要验证 | 条目设置了“使用前需要验证”（编辑页勾选；从 Bitwarden 导入的“主密码重新提示”自动转换）时：详情页验证前只显示标题、用户名和网址，显示 / 复制秘密、验证码、附件、通行密钥、历史版本和编辑都要先验证（指纹 / 面容或主密码；验证只对当前打开的条目有效，换条目或锁定后失效）；自动填充建议里不带值，选中后先验证再填写；“搜索 NyaPassword”选中、保存提示里“更新”也先验证。说明见 [威胁模型.md](../common/docs/威胁模型.md) §3.8.1 |
 | 条目详情 | 复制（Android 13+ 标记敏感内容 `EXTRA_IS_SENSITIVE`，更早版本 `android.content.extra.IS_SENSITIVE`；90 秒后清除）、显示 / 隐藏、TOTP 实时验证码与倒计时、多行密文按行复制、网址、通行密钥、附件下载（系统文件选择器）、历史版本查看 / 恢复、密码历史、同步冲突逐项处理、回收站恢复 / 永久删除 |
 | 编辑 | 全部模板、添加字段（含多行密文和预设：恢复码、密保问题等）、分区、网址与匹配方式、标签、备注、生成器、附件上传；**条目内容按 JSON 树编辑，新版本客户端写入的未知字段原样保留** |
 | 其他页面 | 密码生成器（随机 / 易记口令 / PIN）、安全检查（弱密码、重复、可开两步验证、长期未改、http）与健康检查、设置（自动锁定、生物识别、设备列表与移除、紧急恢复包、修改主密码、保险库、退出、关于与更新） |
@@ -65,5 +66,5 @@ Gradle 任务顺序：`cargoBuild`（`cargo ndk -t arm64-v8a -t x86_64 --platfor
 
 ## 测试情况
 
-- 已验证：`cargo test -p npw-ffi`（含对本机服务端的端到端测试）、`cargo ndk` 两个 ABI 构建、`gradlew lintDebug testDebugUnitTest assembleDebug`；JVM 单元测试覆盖表单字段识别、JSON 树编辑保留未知键、版本比较与发布解析、应用 origin / 特权浏览器 / Digital Asset Links、恢复包二维码。
-- **未测试**：真机、模拟器、国内 ROM（MIUI / HyperOS、ColorOS、OriginOS、HarmonyOS 4）、具体浏览器（Chrome、Edge、国内浏览器的兼容模式）、各 App 的自动填充、通行密钥在真实网站上的注册与登录、输入法内联建议、自更新安装流程。上线前按设计方案 §11 的测试矩阵逐项实测。
+- 已验证：`cargo test -p npw-ffi`（含对本机服务端的端到端测试）、`cargo ndk` 两个 ABI 构建、`gradlew lintDebug testDebugUnitTest assembleDebug`；JVM 单元测试覆盖表单字段识别、JSON 树编辑保留未知键、版本比较与发布解析、应用 origin / 特权浏览器 / Digital Asset Links、恢复包二维码、“使用前需要验证”的规则与 JSON。
+- **未测试**：真机、模拟器、国内 ROM（MIUI / HyperOS、ColorOS、OriginOS、HarmonyOS 4）、具体浏览器（Chrome、Edge、国内浏览器的兼容模式）、各 App 的自动填充、通行密钥在真实网站上的注册与登录、输入法内联建议、自更新安装流程、“使用前需要验证”的界面（详情页验证、BiometricPrompt、自动填充数据集认证）。上线前按设计方案 §11 的测试矩阵逐项实测。

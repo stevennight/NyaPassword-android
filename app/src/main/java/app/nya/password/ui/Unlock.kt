@@ -131,7 +131,8 @@ object Biometrics {
             vault.scope.launch {
                 try {
                     val key = QuickUnlock.open(activity, c)
-                    if (vault.unlocked) key.fill(0) else vault.unlockWithKey(key)
+                    // already unlocked: user verification; the key must still be this account's
+                    if (vault.unlocked) vault.verifyKey(key) else vault.unlockWithKey(key)
                     vault.touch()
                     onDone()
                 } catch (e: CoreFailure) {

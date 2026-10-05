@@ -31,6 +31,7 @@ class ItemDoc(val root: JsonObject) {
     val notes: String get() = str("notes")
     val favorite: Boolean get() = bool("favorite")
     val archived: Boolean get() = bool("archived")
+    val reprompt: Boolean get() = bool("reprompt")
     val tags: List<String> get() = (root["tags"] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull } ?: emptyList()
     val fields: List<JsonObject> get() = array("fields")
     val urls: List<JsonObject> get() = array("urls")
@@ -47,6 +48,9 @@ class ItemDoc(val root: JsonObject) {
     fun withNotes(n: String) = with("notes", JsonPrimitive(n))
     fun withFavorite(b: Boolean) = with("favorite", JsonPrimitive(b))
     fun withArchived(b: Boolean) = with("archived", JsonPrimitive(b))
+
+    /** "使用前需要验证"; the key is left out when off, as the core writes it. */
+    fun withReprompt(b: Boolean) = with("reprompt", if (b) JsonPrimitive(true) else null)
     fun withTags(t: List<String>) = with("tags", JsonArray(t.map { JsonPrimitive(it) }))
 
     /** The `autofill.never` switch; other keys of `autofill` stay. */

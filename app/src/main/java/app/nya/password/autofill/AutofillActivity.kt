@@ -69,7 +69,12 @@ import kotlinx.coroutines.withContext
  * - [MODE_UNLOCK]: the vault was locked — unlock, then hand back the datasets;
  * - [MODE_PICK]: "search NyaPassword" — pick any item; for apps the choice is
  *   remembered (package + signing certificate) so it is suggested next time;
- * - [MODE_SAVE]: a login was submitted — update an item or create one.
+ * - [MODE_SAVE]: a login was submitted — update an item or create one;
+ * - [MODE_REPROMPT]: the user picked an item marked "使用前需要验证" — verify
+ *   (biometrics / master password), then hand back its dataset.
+ *
+ * Items marked "使用前需要验证" are never filled, picked or updated here
+ * without the user verifying in this activity.
  */
 class AutofillActivity : SecureActivity() {
     private var mode = MODE_UNLOCK
@@ -77,6 +82,7 @@ class AutofillActivity : SecureActivity() {
     private var structure: AssistStructure? = null
     private var specs: List<InlinePresentationSpec>? = null
     private var saveToken: String? = null
+    private var repromptItem: Pair<String, String>? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -88,6 +94,9 @@ class AutofillActivity : SecureActivity() {
             specs = intent.getParcelableArrayListExtra(EXTRA_SPECS)
         }
         saveToken = intent.getStringExtra(EXTRA_SAVE)
+        val rv = intent.getStringExtra(EXTRA_VAULT)
+        val ri = intent.getStringExtra(EXTRA_ITEM)
+        if (rv != null && ri != null) repromptItem = rv to ri
         setResult(RESULT_CANCELED)
         setContent {
             NpwTheme {
@@ -101,7 +110,8 @@ class AutofillActivity : SecureActivity() {
     @Composable
     private fun Content() {
         val v = vault
-        var unlocked by remember { mutableStateOf(false) }
+        // the known state first: an unlocked vault must not flash the unlock panel (it may start biometrics)
+        var unlocked by remember { mutableStateOf(v.lock.unlocked) }
         LaunchedEffect(Unit) {
             runCatching { v.refresh() }
             v.checkAutoLock()
@@ -122,6 +132,8 @@ class AutofillActivity : SecureActivity() {
                 ) {
                     unlocked = true
                     if (mode == MODE_UNLOCK) finishUnlock()
+                    // the master password / biometrics just now are the verification
+                    if (mode == MODE_REPROMPT) finishReprompt()
                 }
                 TextButton(onClick = { finish() }) { Text("取消") }
             }
@@ -130,7 +142,46 @@ class AutofillActivity : SecureActivity() {
         when (mode) {
             MODE_PICK -> Picker()
             MODE_SAVE -> SaveScreen()
+            MODE_REPROMPT -> RepromptScreen()
             else -> Text("正在填写…", Modifier.padding(32.dp), color = muted)
+        }
+    }
+
+    @Composable
+    private fun RepromptScreen() {
+        var verified by remember { mutableStateOf(false) }
+        if (verified) {
+            Text("正在填写…", Modifier.padding(32.dp), color = muted)
+            return
+        }
+        Column(Modifier.verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally) {
+            UnlockPanel(this@AutofillActivity, "此条目需要验证", "填写 ${target?.label ?: ""} 前，请验证身份", verify = true) {
+                verified = true
+                finishReprompt()
+            }
+            TextButton(onClick = { finish() }) { Text("取消") }
+        }
+    }
+
+    /** Dataset authentication: the item is still a match for this app / site; return its real dataset. */
+    private fun finishReprompt() {
+        val v = vault
+        val s = structure ?: return finish()
+        val t = target ?: return finish()
+        val (vaultId, itemId) = repromptItem ?: return finish()
+        v.scope.launch {
+            val dataset = runCatching {
+                withContext(Dispatchers.IO) {
+                    val (view, c) = Fill.candidates(v, t).firstOrNull { it.first.vaultId == vaultId && it.first.itemId == itemId }
+                        ?: return@withContext null
+                    Fill.dataset(this@AutofillActivity, StructureParser.parse(s), view, c, null)
+                }
+            }.getOrNull()
+            if (dataset != null) {
+                v.touch()
+                setResult(RESULT_OK, Intent().putExtra(AutofillManager.EXTRA_AUTHENTICATION_RESULT, dataset))
+            }
+            finish()
         }
     }
 
@@ -159,8 +210,20 @@ class AutofillActivity : SecureActivity() {
         val t = target
         var query by remember { mutableStateOf("") }
         var items by remember { mutableStateOf<List<ItemView>>(emptyList()) }
+        var verifyFor by remember { mutableStateOf<ItemView?>(null) }
         LaunchedEffect(query) {
             items = runCatching { v.items(ListFilter(query = query).toJson()) }.getOrDefault(emptyList())
+        }
+        verifyFor?.let { item ->
+            // an item marked "使用前需要验证": verify before it is filled
+            Column(Modifier.verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally) {
+                UnlockPanel(this@AutofillActivity, "此条目需要验证", "填写“${item.title}”前，请验证身份", verify = true) {
+                    verifyFor = null
+                    pick(item)
+                }
+                TextButton(onClick = { verifyFor = null }) { Text("返回") }
+            }
+            return
         }
         Column(Modifier.fillMaxSize().padding(horizontal = 12.dp)) {
             Text("选择要填写的条目", Modifier.padding(top = 16.dp, start = 4.dp), fontSize = 20.sp, fontWeight = FontWeight.Bold)
@@ -177,7 +240,7 @@ class AutofillActivity : SecureActivity() {
             )
             LazyColumn(Modifier.weight(1f)) {
                 items(items, key = { it.vaultId + it.itemId }) { item ->
-                    ItemRow(item) { pick(item) }
+                    ItemRow(item) { if (item.reprompt) verifyFor = item else pick(item) }
                     HorizontalDivider(Modifier.padding(start = 64.dp), color = MaterialTheme.colorScheme.outlineVariant)
                 }
             }
@@ -223,6 +286,7 @@ class AutofillActivity : SecureActivity() {
         var matches by remember { mutableStateOf<List<Pair<ItemView, Content>>?>(null) }
         var busy by remember { mutableStateOf(false) }
         var error by remember { mutableStateOf("") }
+        var verifyFor by remember { mutableStateOf<ItemView?>(null) }
         LaunchedEffect(Unit) { matches = withContext(Dispatchers.IO) { runCatching { Saver.matches(v, save) }.getOrDefault(emptyList()) } }
 
         fun run(block: () -> String) {
@@ -242,6 +306,18 @@ class AutofillActivity : SecureActivity() {
             }
         }
 
+        verifyFor?.let { item ->
+            // updating an item marked "使用前需要验证" needs the user verified
+            Column(Modifier.verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally) {
+                UnlockPanel(this@AutofillActivity, "此条目需要验证", "更新“${item.title}”前，请验证身份", verify = true) {
+                    verifyFor = null
+                    run { Saver.update(v, item, save); "已更新“${item.title}”" }
+                }
+                TextButton(onClick = { verifyFor = null }) { Text("返回") }
+            }
+            return
+        }
+
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("保存到 NyaPassword", fontSize = 22.sp, fontWeight = FontWeight.Bold)
             Text("${if (save.target.browser) "网站" else "应用"}：${save.target.label}", color = muted)
@@ -253,9 +329,17 @@ class AutofillActivity : SecureActivity() {
             } else {
                 list.forEach { (item, c) ->
                     val same = (c.username ?: "") == save.username
-                    val unchanged = same && c.password == save.password
-                    OutlinedButton(onClick = { run { Saver.update(v, item, save); "已更新“${item.title}”" } }, enabled = !busy && !unchanged, modifier = Modifier.fillMaxWidth()) {
-                        Text(if (unchanged) "“${item.title}”已是这个密码" else "更新“${item.title}”${c.username?.let { "（$it）" } ?: ""}")
+                    // a "使用前需要验证" item does not tell whether the submitted password is its own
+                    val unchanged = !item.reprompt && same && c.password == save.password
+                    OutlinedButton(
+                        onClick = { if (item.reprompt) verifyFor = item else run { Saver.update(v, item, save); "已更新“${item.title}”" } },
+                        enabled = !busy && !unchanged,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(
+                            if (unchanged) "“${item.title}”已是这个密码"
+                            else "更新“${item.title}”${c.username?.let { "（$it）" } ?: ""}${if (item.reprompt) "（需要验证）" else ""}",
+                        )
                     }
                 }
                 Button(
@@ -284,7 +368,10 @@ class AutofillActivity : SecureActivity() {
         const val MODE_UNLOCK = "unlock"
         const val MODE_PICK = "pick"
         const val MODE_SAVE = "save"
+        const val MODE_REPROMPT = "reprompt"
         private const val EXTRA_MODE = "mode"
+        private const val EXTRA_VAULT = "vault_id"
+        private const val EXTRA_ITEM = "item_id"
         private const val EXTRA_TARGET = "target"
         private const val EXTRA_SPECS = "inline_specs"
         private const val EXTRA_SAVE = "save_token"
@@ -296,6 +383,16 @@ class AutofillActivity : SecureActivity() {
                 .putExtra(EXTRA_MODE, mode)
                 .putExtra(EXTRA_TARGET, target.toBundle())
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && specs != null) i.putParcelableArrayListExtra(EXTRA_SPECS, ArrayList(specs))
+            return pending(context, i).intentSender
+        }
+
+        /** Dataset authentication for an item marked "使用前需要验证". */
+        fun repromptSender(context: Context, target: FillTarget, vaultId: String, itemId: String): IntentSender {
+            val i = Intent(context, AutofillActivity::class.java)
+                .putExtra(EXTRA_MODE, MODE_REPROMPT)
+                .putExtra(EXTRA_TARGET, target.toBundle())
+                .putExtra(EXTRA_VAULT, vaultId)
+                .putExtra(EXTRA_ITEM, itemId)
             return pending(context, i).intentSender
         }
 
