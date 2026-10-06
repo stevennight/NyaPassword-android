@@ -295,7 +295,7 @@ fun UnlockPanel(
     }
 }
 
-/** The app's mark: a key with cat ears, in the accent colour. */
+/** The app's mark: a cat head with a keyhole, in the accent colour. */
 @Composable
 fun Logo(size: Int) {
     Row(
