@@ -20,6 +20,13 @@ class ParsedScreen(
     val nodeCount: Int = 0,
     /** Built by the system from a browser's accessibility tree ([StructureParser.parse]). */
     val compatMode: Boolean = false,
+    /**
+     * Every other node that has an autofill id (containers, labels, the address bar):
+     * set as ignored on the response, so focus moving onto one of them (the page
+     * relayouts when the keyboard opens) does not start a new request that clears
+     * the suggestions on screen.
+     */
+    val ignoredIds: List<AutofillId> = emptyList(),
 ) {
     fun idsOf(role: Role): List<AutofillId> = when (role) {
         Role.USERNAME -> classification.username
@@ -54,6 +61,7 @@ object StructureParser {
         val packageName = structure.activityComponent?.packageName.orEmpty()
         val urlBarId = UrlBars.idOf(packageName)
         var urlBarDomain: Pair<String, String?>? = null
+        val ignored = ArrayList<AutofillId>()
 
         fun visit(node: AssistStructure.ViewNode, inherited: Pair<String, String?>?) {
             nodeCount++
@@ -92,6 +100,8 @@ object StructureParser {
                 ids += id
                 values += node.autofillValue?.takeIf { it.isText }?.textValue?.toString()
                 if (domain != null) domains[index] = domain
+            } else if (id != null) {
+                ignored += id
             }
             for (i in 0 until node.childCount) visit(node.getChildAt(i), domain)
         }
@@ -112,6 +122,7 @@ object StructureParser {
             classification = cls,
             nodeCount = nodeCount,
             compatMode = compatMode,
+            ignoredIds = ignored,
         )
     }
 }

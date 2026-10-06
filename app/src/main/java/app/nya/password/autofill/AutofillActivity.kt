@@ -194,7 +194,7 @@ class AutofillActivity : SecureActivity() {
             val response = runCatching {
                 withContext(Dispatchers.IO) {
                     val screen = StructureParser.parse(s, t.compat)
-                    Fill.response(this@AutofillActivity, v, screen, t, specs)
+                    Fill.response(this@AutofillActivity, v, screen, t, specs, intent.getIntExtra(EXTRA_MAX_INLINE, 0))
                 }
             }.getOrNull()
             if (response != null) {
@@ -374,14 +374,16 @@ class AutofillActivity : SecureActivity() {
         private const val EXTRA_ITEM = "item_id"
         private const val EXTRA_TARGET = "target"
         private const val EXTRA_SPECS = "inline_specs"
+        private const val EXTRA_MAX_INLINE = "max_inline"
         private const val EXTRA_SAVE = "save_token"
         private var requestCode = 1
 
         /** An IntentSender for the autofill framework (mutable: the system adds the assist structure). */
-        fun sender(context: Context, mode: String, target: FillTarget, specs: List<InlinePresentationSpec>?): IntentSender {
+        fun sender(context: Context, mode: String, target: FillTarget, specs: List<InlinePresentationSpec>?, maxInline: Int = 0): IntentSender {
             val i = Intent(context, AutofillActivity::class.java)
                 .putExtra(EXTRA_MODE, mode)
                 .putExtra(EXTRA_TARGET, target.toBundle())
+                .putExtra(EXTRA_MAX_INLINE, maxInline)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && specs != null) i.putParcelableArrayListExtra(EXTRA_SPECS, ArrayList(specs))
             return pending(context, i).intentSender
         }

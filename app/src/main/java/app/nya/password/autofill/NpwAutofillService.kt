@@ -49,13 +49,22 @@ class NpwAutofillService : AutofillService() {
             structure.activityComponent?.packageName.orEmpty().let { it in Browsers.BY_PACKAGE || UrlBars.idOf(it) != null }
         }
         // The system hands a response with any inline presentation to the keyboard and then
-        // never falls back to the drop-down, and keyboards may not draw suggestions for
-        // compatibility-mode fields (seen on a vivo keyboard in Edge): use the drop-down there.
-        val specs = if (compat) null else requestedSpecs
-        if (compat) {
-            val note = if (requestedSpecs.isNullOrEmpty()) "兼容模式" else "兼容模式（不用输入法内嵌建议，改用下拉框）"
-            entry = entry.copy(inline = listOf(note, entry.inline).filter { it.isNotEmpty() }.joinToString(" · "))
+        // never falls back to the drop-down, whether the keyboard draws it or not. Without
+        // inline presentations it shows the drop-down: the user picks (settings).
+        val prefs = vault.prefs
+        val useInline = if (compat) prefs.inlineCompat else prefs.inlineApps
+        val specs = if (useInline) requestedSpecs else null
+        val maxInline = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && specs != null) {
+            request.inlineSuggestionsRequest?.maxSuggestionCount ?: 0
+        } else {
+            0
         }
+        val notes = buildList {
+            if (compat) add("兼容模式")
+            if (!requestedSpecs.isNullOrEmpty() && !useInline) add("按设置不用输入法候选栏，改用下拉框")
+            if (maxInline > 0) add("候选栏最多 $maxInline 条")
+        }
+        entry = entry.copy(inline = (notes + entry.inline).filter { it.isNotEmpty() }.joinToString(" · "))
         val screen = runCatching { StructureParser.parse(structure, compat) }.getOrElse {
             Log.w(TAG, "parse failed", it)
             log("解析界面失败：${it.message ?: it.javaClass.simpleName}")
@@ -82,12 +91,12 @@ class NpwAutofillService : AutofillService() {
                 v.checkAutoLock()
                 when {
                     !v.lock.signedIn -> null.also { outcome = "NyaPassword 尚未登录账号" }
-                    !v.lock.unlocked -> Fill.lockedResponse(this@NpwAutofillService, screen, target, specs)
+                    !v.lock.unlocked -> Fill.lockedResponse(this@NpwAutofillService, screen, target, specs, maxInline)
                         .also { outcome = "已锁定：提供“点按解锁”（${target.target}）" }
                     else -> {
                         var stats = "已解锁"
                         withContext(Dispatchers.IO) {
-                            Fill.response(this@NpwAutofillService, v, screen, target, specs) { n, err ->
+                            Fill.response(this@NpwAutofillService, v, screen, target, specs, maxInline) { n, err ->
                                 stats = if (err == null && n == 0 && screen.classification.guessed) "已解锁：猜测的用户名框没有匹配条目，不显示（${target.target}）"
                                 else if (err == null) "已解锁：$n 个匹配条目 + 搜索（${target.target}）"
                                 else "已解锁，但读取匹配条目失败：${err.message ?: err.javaClass.simpleName}；只提供搜索"

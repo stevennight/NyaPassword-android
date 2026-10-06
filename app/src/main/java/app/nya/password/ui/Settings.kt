@@ -259,6 +259,26 @@ fun SettingsScreen(activity: MainActivity, pad: PaddingValues) {
                             "自动填充服务",
                             if (autofillOn) "已启用 NyaPassword" else "未启用：在系统设置里选择 NyaPassword",
                         ) { Chip(if (autofillOn) "已启用" else "未启用", if (autofillOn) ChipKind.OK else ChipKind.WARN) }
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                            var inlineApps by remember { mutableStateOf(v.prefs.inlineApps) }
+                            var inlineCompat by remember { mutableStateOf(v.prefs.inlineCompat) }
+                            SwitchField(
+                                "建议显示在输入法候选栏",
+                                "关闭后显示在输入框下方的下拉框里。输入法不支持候选栏建议时系统也会用下拉框",
+                                checked = inlineApps,
+                            ) { on ->
+                                inlineApps = on
+                                v.prefs.inlineApps = on
+                            }
+                            SwitchField(
+                                "Edge 等浏览器也显示在输入法候选栏",
+                                "这类浏览器通过系统兼容模式填写，有的输入法不显示它们的建议；看不到建议时关掉，改用下拉框",
+                                checked = inlineCompat,
+                            ) { on ->
+                                inlineCompat = on
+                                v.prefs.inlineCompat = on
+                            }
+                        }
                         Row(Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
                             Button(onClick = {
                                 // come back to this category from the guide
@@ -753,7 +773,7 @@ fun SetupGuideScreen(activity: MainActivity) {
                     "打开 Chrome → 右上角 ⋮ → 设置 → 自动填充服务",
                     "选择“使用其他服务自动填充”",
                     "完全退出并重新打开 Chrome（在最近任务里划掉）",
-                    "Edge 没有这个选项，通过系统的兼容模式填写，不用设置；启用 NyaPassword 或更新后在最近任务里划掉 Edge 再打开。建议出现得稍慢，属正常",
+                    "Edge 没有这个选项，通过系统的兼容模式填写，不用设置；启用 NyaPassword 或更新后在最近任务里划掉 Edge 再打开。输入法候选栏里看不到建议时，在 设置 → 自动填充 关掉“Edge 等浏览器也显示在输入法候选栏”",
                 )
             }
             Group(title = "4. 国内系统的设置位置") {

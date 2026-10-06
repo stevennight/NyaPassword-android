@@ -235,8 +235,8 @@ object Fill {
     }
 
     /** "Locked: tap to unlock" for the whole response. */
-    fun lockedResponse(context: Context, screen: ParsedScreen, target: FillTarget, specs: List<InlinePresentationSpec>?): FillResponse {
-        val sender = AutofillActivity.sender(context, AutofillActivity.MODE_UNLOCK, target, specs)
+    fun lockedResponse(context: Context, screen: ParsedScreen, target: FillTarget, specs: List<InlinePresentationSpec>?, maxInline: Int = 0): FillResponse {
+        val sender = AutofillActivity.sender(context, AutofillActivity.MODE_UNLOCK, target, specs, maxInline)
         val title = "NyaPassword 已锁定"
         val sub = "点按解锁，填写 ${target.label}"
         val p = presentation(context, title, sub, R.drawable.ic_autofill_lock)
@@ -248,12 +248,15 @@ object Fill {
             r.setAuthentication(ids, sender, p)
         }
         saveInfo(screen)?.let { r.setSaveInfo(it) }
+        ignore(r, screen)
         return r.build()
     }
 
     /**
      * The datasets of the matching items, "search NyaPassword", and SaveInfo. Blocking.
      * A failed lookup still offers the search entry; [onStats] gets the match count and that error.
+     * [maxInline]: the keyboard's maximum number of inline suggestions (0: none given). Some
+     * keyboards show nothing at all when given more; the items past it stay in the search.
      */
     fun response(
         context: Context,
@@ -261,16 +264,19 @@ object Fill {
         screen: ParsedScreen,
         target: FillTarget,
         specs: List<InlinePresentationSpec>?,
+        maxInline: Int = 0,
         onStats: (matches: Int, error: Throwable?) -> Unit = { _, _ -> },
     ): FillResponse? {
         val r = FillResponse.Builder()
         var count = 0
         // the last spec is the one keyboards keep for "more" entries; use the others first
         fun spec(i: Int): InlinePresentationSpec? = specs?.let { if (it.isEmpty()) null else it[minOf(i, it.size - 1)] }
+        // one inline slot stays for "search"
+        val itemSlots = if (maxInline > 0) maxInline - 1 else Int.MAX_VALUE
         val found = runCatching { candidates(vault, target) }
         onStats(found.getOrNull()?.size ?: 0, found.exceptionOrNull())
         for ((v, c) in found.getOrDefault(emptyList())) {
-            val inl = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val inl = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && count < itemSlots) {
                 inline(context, spec(count), v.title.ifBlank { "（无标题）" }, c.username, if (v.reprompt) R.drawable.ic_autofill_lock else R.drawable.ic_autofill_key)
             } else {
                 null
@@ -285,17 +291,23 @@ object Fill {
         if (count == 0 && screen.classification.guessed) return null
         // Search the vault (and, for apps, remember the choice).
         val searchTitle = if (count == 0) "搜索 NyaPassword" else "搜索其他条目…"
-        val sender = AutofillActivity.sender(context, AutofillActivity.MODE_PICK, target, specs)
+        val sender = AutofillActivity.sender(context, AutofillActivity.MODE_PICK, target, specs, maxInline)
         val sp = presentation(context, searchTitle, target.label, R.drawable.ic_autofill_search)
         val sb = Dataset.Builder(sp)
         screen.allIds.forEach { sb.put(screen, it, null, sp) }
         sb.setAuthentication(sender)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            inline(context, spec(count), searchTitle, target.label, R.drawable.ic_autofill_search)?.let { sb.setInlinePresentation(it) }
+            inline(context, spec(minOf(count, itemSlots)), searchTitle, target.label, R.drawable.ic_autofill_search)?.let { sb.setInlinePresentation(it) }
         }
         r.addDataset(sb.build())
         saveInfo(screen)?.let { r.setSaveInfo(it) }
+        ignore(r, screen)
         return r.build()
+    }
+
+    /** The screen's non-input views do not start new requests ([ParsedScreen.ignoredIds]). */
+    private fun ignore(r: FillResponse.Builder, screen: ParsedScreen) {
+        if (screen.ignoredIds.isNotEmpty()) r.setIgnoredIds(*screen.ignoredIds.toTypedArray())
     }
 
     /** Offer to save when the screen has a password field. */

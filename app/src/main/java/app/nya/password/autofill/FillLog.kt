@@ -51,7 +51,7 @@ object FillLog {
 
     fun fields(screen: ParsedScreen): String {
         val c = screen.classification
-        return "共 ${screen.nodeCount} 个节点，${screen.views.size} 个可填视图：用户名 ${c.username.size}${if (c.guessed) "（猜测）" else ""} · 密码 ${c.password.size} · 验证码 ${c.otp.size}"
+        return "共 ${screen.nodeCount} 个节点（忽略 ${screen.ignoredIds.size} 个），${screen.views.size} 个可填视图：用户名 ${c.username.size}${if (c.guessed) "（猜测）" else ""} · 密码 ${c.password.size} · 验证码 ${c.otp.size}"
     }
 
     /** What the classifier saw of each view; the field contents themselves are left out. */

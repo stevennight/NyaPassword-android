@@ -40,6 +40,16 @@ class Prefs(context: Context) {
         get() = p.getBoolean("check_updates", true)
         set(v) = p.edit { putBoolean("check_updates", v) }
 
+    /** Autofill suggestions in the keyboard's suggestion strip (Android 11+); off: the drop-down under the field. */
+    var inlineApps: Boolean
+        get() = p.getBoolean("inline_apps", true)
+        set(v) = p.edit { putBoolean("inline_apps", v) }
+
+    /** The same for browsers served through compatibility mode (Edge…), where keyboards may draw nothing. */
+    var inlineCompat: Boolean
+        get() = p.getBoolean("inline_compat", true)
+        set(v) = p.edit { putBoolean("inline_compat", v) }
+
     /** The server last typed on the sign-in page. */
     var lastServer: String
         get() = p.getString("last_server", "") ?: ""
