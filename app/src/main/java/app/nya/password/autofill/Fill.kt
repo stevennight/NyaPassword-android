@@ -169,7 +169,7 @@ object Fill {
      * suggestion: there the dataset matches any text.
      */
     private fun Dataset.Builder.put(screen: ParsedScreen, id: AutofillId, value: AutofillValue?, p: RemoteViews? = null) {
-        if (screen.compatMode && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+        if (screen.compatMode && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             if (p != null) setValue(id, value, ANY_TEXT, p) else setValue(id, value, ANY_TEXT)
         } else {
             if (p != null) setValue(id, value, p) else setValue(id, value)
