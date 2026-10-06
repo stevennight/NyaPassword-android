@@ -59,6 +59,31 @@ class FieldClassifierTest {
     }
 
     @Test
+    fun compatibilityModeBrowserPage() {
+        // the system's accessibility bridge: no ids, no hints, password as the bare variation 0x80
+        val c = FieldClassifier.classify(views(view(plain, hint = ""), view(0x80, hint = "")))
+        assertEquals(listOf(0), c.username)
+        assertEquals(listOf(1), c.password)
+    }
+
+    @Test
+    fun multiStepLoginGuessesTheFocusedField() {
+        val lone = views(view(plain, hint = "").copy(focused = true))
+        assertTrue(FieldClassifier.classify(lone).isEmpty)
+        val c = FieldClassifier.classify(lone, guessFocused = true)
+        assertEquals(listOf(0), c.username)
+        assertTrue(c.guessed)
+        // Google's first step is recognized by its id
+        val g = FieldClassifier.classify(views(view(plain, id = "identifierId").copy(focused = true)), guessFocused = true)
+        assertEquals(listOf(0), g.username)
+        assertFalse(g.guessed)
+        // no guess for a search box, an unfocused field, or a page with a password field
+        assertTrue(FieldClassifier.classify(views(view(plain, hint = "搜索").copy(focused = true)), guessFocused = true).isEmpty)
+        assertTrue(FieldClassifier.classify(views(view(plain)), guessFocused = true).isEmpty)
+        assertFalse(FieldClassifier.classify(views(view(plain).copy(focused = true), view(0x80)), guessFocused = true).guessed)
+    }
+
+    @Test
     fun keywordsWithoutInputTypes() {
         val c = FieldClassifier.classify(views(view(hint = "请输入账号"), view(hint = "请输入登录密码")))
         assertEquals(listOf(0), c.username)

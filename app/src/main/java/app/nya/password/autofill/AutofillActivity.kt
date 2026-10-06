@@ -174,7 +174,7 @@ class AutofillActivity : SecureActivity() {
                 withContext(Dispatchers.IO) {
                     val (view, c) = Fill.candidates(v, t).firstOrNull { it.first.vaultId == vaultId && it.first.itemId == itemId }
                         ?: return@withContext null
-                    Fill.dataset(this@AutofillActivity, StructureParser.parse(s), view, c, null)
+                    Fill.dataset(this@AutofillActivity, StructureParser.parse(s, t.compat), view, c, null)
                 }
             }.getOrNull()
             if (dataset != null) {
@@ -193,7 +193,7 @@ class AutofillActivity : SecureActivity() {
         v.scope.launch {
             val response = runCatching {
                 withContext(Dispatchers.IO) {
-                    val screen = StructureParser.parse(s)
+                    val screen = StructureParser.parse(s, t.compat)
                     Fill.response(this@AutofillActivity, v, screen, t, specs)
                 }
             }.getOrNull()
@@ -258,7 +258,7 @@ class AutofillActivity : SecureActivity() {
                     val full: ItemView = decode(v.callNow { it.item(item.vaultId, item.itemId) })
                     val c = Content.of(full.content ?: error("no content"))
                     if (!t.browser) Saver.linkIfApp(v, item.vaultId, item.itemId, t)
-                    Fill.dataset(this@AutofillActivity, StructureParser.parse(s), full, c, null)
+                    Fill.dataset(this@AutofillActivity, StructureParser.parse(s, t.compat), full, c, null)
                 }
                 if (dataset == null) {
                     v.say("这个条目没有可以填写的用户名或密码")

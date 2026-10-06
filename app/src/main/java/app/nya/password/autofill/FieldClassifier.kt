@@ -36,6 +36,8 @@ data class Classification(
     val otp: List<Int> = emptyList(),
     /** A sign-up / change-password form (new-password hints, a confirmation field, …). */
     val newPassword: Boolean = false,
+    /** Nothing was recognized; the focused text field is taken as the username (multi-step logins). */
+    val guessed: Boolean = false,
 ) {
     val isEmpty: Boolean get() = username.isEmpty() && password.isEmpty() && otp.isEmpty()
     fun roleOf(index: Int): Role? = when (index) {
@@ -84,7 +86,7 @@ object FieldClassifier {
         "验证码", "驗證碼", "校验码", "动态码", "动态密码", "短信码", "安全码", "两步验证", "二次验证", "身份验证器",
     )
     private val KW_USERNAME = listOf(
-        "user", "login", "account", "acct", "email", "e-mail", "mail", "phone", "mobile", "tel", "uid", "loginid", "nick", "member",
+        "user", "login", "account", "acct", "identifier", "email", "e-mail", "mail", "phone", "mobile", "tel", "uid", "loginid", "nick", "member",
         "账号", "帳號", "帐号", "账户", "帳戶", "用户名", "用戶名", "登录名", "登录账号", "会员名", "手机号", "手機號", "手机", "手機",
         "邮箱", "郵箱", "电子邮件", "電子郵件", "邮件地址", "通行证", "学号", "工号", "身份证号",
     )
@@ -152,7 +154,8 @@ object FieldClassifier {
         val cls = v.inputType and TYPE_MASK_CLASS
         val variation = v.inputType and TYPE_MASK_VARIATION
         return when {
-            cls == TYPE_CLASS_TEXT && variation in PASSWORD_VARIATIONS -> Role.PASSWORD
+            // compatibility mode reports a password input as the bare variation (no class bits)
+            (cls == TYPE_CLASS_TEXT || cls == 0) && variation in PASSWORD_VARIATIONS -> Role.PASSWORD
             cls == TYPE_CLASS_NUMBER && variation == NUM_VAR_PASSWORD -> Role.PASSWORD
             cls == TYPE_CLASS_TEXT && (variation == VAR_EMAIL || variation == VAR_WEB_EMAIL) -> Role.USERNAME
             cls == TYPE_CLASS_PHONE -> Role.USERNAME
@@ -160,10 +163,17 @@ object FieldClassifier {
         }
     }
 
-    fun classify(views: List<ViewDesc>): Classification {
+    /**
+     * [guessFocused]: when nothing is recognized, take the focused plain text
+     * field as the username. For browser pages in compatibility mode, which
+     * carry no HTML attributes: the first step of a multi-step login (only an
+     * account field) looks like any other text field there.
+     */
+    fun classify(views: List<ViewDesc>, guessFocused: Boolean = false): Classification {
         val candidates = views.filter(::fillable)
         val roles = LinkedHashMap<Int, Role>()
         var newPassword = false
+        val ignored = HashSet<Int>()
 
         for (v in candidates) {
             val w = words(v)
@@ -173,7 +183,10 @@ object FieldClassifier {
                 if (hinted.second) newPassword = true
                 continue
             }
-            if (any(w, KW_IGNORE) && !any(w, KW_PASSWORD)) continue
+            if (any(w, KW_IGNORE) && !any(w, KW_PASSWORD)) {
+                ignored += v.index
+                continue
+            }
             val t = typeRole(v)
             val role = when {
                 // a numeric "password" field labelled as a code is a one-time code
@@ -205,6 +218,11 @@ object FieldClassifier {
             usernames
         }
         if (passwords.size >= 2) newPassword = true
+        if (guessFocused && user.isEmpty() && passwords.isEmpty() && otps.isEmpty()) {
+            candidates.firstOrNull { it.focused && it.index !in ignored && plainText(it) }?.let {
+                return Classification(username = listOf(it.index), guessed = true)
+            }
+        }
         return Classification(user, passwords, otps, newPassword)
     }
 

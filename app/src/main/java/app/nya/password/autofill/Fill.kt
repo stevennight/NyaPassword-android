@@ -15,6 +15,7 @@ import android.service.autofill.Dataset
 import android.service.autofill.FillResponse
 import android.service.autofill.InlinePresentation
 import android.service.autofill.SaveInfo
+import android.view.autofill.AutofillId
 import android.view.autofill.AutofillValue
 import android.widget.RemoteViews
 import android.widget.inline.InlinePresentationSpec
@@ -28,6 +29,7 @@ import app.nya.password.core.ItemView
 import app.nya.password.core.Origins
 import app.nya.password.core.Vault
 import app.nya.password.core.decode
+import java.util.regex.Pattern
 
 /** Where a fill request comes from and what the vault matches it against. */
 data class FillTarget(
@@ -39,6 +41,8 @@ data class FillTarget(
     val certs: List<String>,
     /** Shown to the user: the domain or the app's name. */
     val label: String,
+    /** The request came through compatibility mode: [AutofillActivity] parses the structure the same way. */
+    val compat: Boolean = false,
 ) {
     fun toBundle() = Bundle().apply {
         putString("target", target)
@@ -46,6 +50,7 @@ data class FillTarget(
         putBoolean("browser", browser)
         putStringArrayList("certs", ArrayList(certs))
         putString("label", label)
+        putBoolean("compat", compat)
     }
 
     companion object {
@@ -57,6 +62,7 @@ data class FillTarget(
                 b.getBoolean("browser"),
                 b.getStringArrayList("certs").orEmpty(),
                 b.getString("label").orEmpty(),
+                b.getBoolean("compat"),
             )
         }
 
@@ -70,13 +76,13 @@ data class FillTarget(
             val certs = Origins.signingCerts(context, pkg).map(Origins::hex)
             if (Browsers.isBrowser(context, pkg, certs)) {
                 val domain = screen.webDomain ?: return null
-                return FillTarget(Origins.webTarget(screen.webScheme, domain), pkg, true, certs, domain)
+                return FillTarget(Origins.webTarget(screen.webScheme, domain), pkg, true, certs, domain, screen.compatMode)
             }
             val label = runCatching {
                 val pm = context.packageManager
                 pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
             }.getOrDefault(pkg)
-            return FillTarget(Origins.appTarget(pkg), pkg, false, certs, label)
+            return FillTarget(Origins.appTarget(pkg), pkg, false, certs, label, screen.compatMode)
         }
     }
 }
@@ -133,8 +139,7 @@ object Fill {
     @RequiresApi(Build.VERSION_CODES.R)
     @SuppressLint("RestrictedApi")
     fun inline(context: Context, spec: InlinePresentationSpec?, title: String, subtitle: String?, icon: Int = R.drawable.ic_autofill_key): InlinePresentation? {
-        spec ?: return null
-        if (!UiVersions.getVersions(spec.style).contains(UiVersions.INLINE_UI_VERSION_1)) return null
+        if (spec == null || !inlineV1(spec)) return null
         val attribution = PendingIntent.getActivity(
             context, 0, Intent(context, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
@@ -145,6 +150,30 @@ object Fill {
         if (!subtitle.isNullOrEmpty()) b.setSubtitle(subtitle)
         val slice: Slice = b.build().slice
         return InlinePresentation(slice, spec, false)
+    }
+
+    /** Whether the keyboard can draw our (androidx v1) inline suggestion for this spec. */
+    @RequiresApi(Build.VERSION_CODES.R)
+    @SuppressLint("RestrictedApi")
+    fun inlineV1(spec: InlinePresentationSpec): Boolean =
+        runCatching { UiVersions.getVersions(spec.style).contains(UiVersions.INLINE_UI_VERSION_1) }.getOrDefault(false)
+
+    /** Matches whatever the field holds (see [put]). */
+    private val ANY_TEXT: Pattern = Pattern.compile(".*", Pattern.DOTALL)
+
+    /**
+     * Sets one field of a dataset. The system hides a dataset once the field
+     * has text the value does not start with (and always hides value-less
+     * ones then, like "search" or "需要验证"). In compatibility mode an empty
+     * page input reports its placeholder as text, which would hide every
+     * suggestion: there the dataset matches any text.
+     */
+    private fun Dataset.Builder.put(screen: ParsedScreen, id: AutofillId, value: AutofillValue?, p: RemoteViews? = null) {
+        if (screen.compatMode && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            if (p != null) setValue(id, value, ANY_TEXT, p) else setValue(id, value, ANY_TEXT)
+        } else {
+            if (p != null) setValue(id, value, p) else setValue(id, value)
+        }
     }
 
     /** The fields a dataset of this item fills (username, password, one-time code). */
@@ -171,7 +200,7 @@ object Fill {
         if (ids.isEmpty()) return null
         val p = presentation(context, item.title.ifBlank { "（无标题）" }, "${c.username ?: item.subtitle} · 需要验证".trimStart(' ', '·'), R.drawable.ic_autofill_lock)
         val b = Dataset.Builder(p)
-        ids.forEach { b.setValue(it, null, p) }
+        ids.forEach { b.put(screen, it, null, p) }
         b.setAuthentication(AutofillActivity.repromptSender(context, target, item.vaultId, item.itemId))
         if (inline != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) b.setInlinePresentation(inline)
         return b.build()
@@ -189,15 +218,15 @@ object Fill {
         val p = presentation(context, title, c.username ?: item.subtitle)
         val b = Dataset.Builder(p)
         var any = false
-        c.username?.let { u -> screen.idsOf(Role.USERNAME).forEach { b.setValue(it, AutofillValue.forText(u)); any = true } }
-        c.password?.let { pw -> screen.idsOf(Role.PASSWORD).forEach { b.setValue(it, AutofillValue.forText(pw)); any = true } }
+        c.username?.let { u -> screen.idsOf(Role.USERNAME).forEach { b.put(screen, it, AutofillValue.forText(u)); any = true } }
+        c.password?.let { pw -> screen.idsOf(Role.PASSWORD).forEach { b.put(screen, it, AutofillValue.forText(pw)); any = true } }
         c.totp?.let { uri ->
             val ids = screen.idsOf(Role.OTP)
             if (ids.isNotEmpty()) {
                 val code = runCatching {
                     decode<app.nya.password.core.OtpCode>(app.nya.password.ffi.otpCode(uri, System.currentTimeMillis() / 1000)).code
                 }.getOrNull()
-                if (code != null) ids.forEach { b.setValue(it, AutofillValue.forText(code)); any = true }
+                if (code != null) ids.forEach { b.put(screen, it, AutofillValue.forText(code)); any = true }
             }
         }
         if (!any) return null
@@ -222,13 +251,25 @@ object Fill {
         return r.build()
     }
 
-    /** The datasets of the matching items, "search NyaPassword", and SaveInfo. Blocking. */
-    fun response(context: Context, vault: Vault, screen: ParsedScreen, target: FillTarget, specs: List<InlinePresentationSpec>?): FillResponse? {
+    /**
+     * The datasets of the matching items, "search NyaPassword", and SaveInfo. Blocking.
+     * A failed lookup still offers the search entry; [onStats] gets the match count and that error.
+     */
+    fun response(
+        context: Context,
+        vault: Vault,
+        screen: ParsedScreen,
+        target: FillTarget,
+        specs: List<InlinePresentationSpec>?,
+        onStats: (matches: Int, error: Throwable?) -> Unit = { _, _ -> },
+    ): FillResponse? {
         val r = FillResponse.Builder()
         var count = 0
         // the last spec is the one keyboards keep for "more" entries; use the others first
         fun spec(i: Int): InlinePresentationSpec? = specs?.let { if (it.isEmpty()) null else it[minOf(i, it.size - 1)] }
-        for ((v, c) in candidates(vault, target)) {
+        val found = runCatching { candidates(vault, target) }
+        onStats(found.getOrNull()?.size ?: 0, found.exceptionOrNull())
+        for ((v, c) in found.getOrDefault(emptyList())) {
             val inl = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 inline(context, spec(count), v.title.ifBlank { "（无标题）" }, c.username, if (v.reprompt) R.drawable.ic_autofill_lock else R.drawable.ic_autofill_key)
             } else {
@@ -240,12 +281,14 @@ object Fill {
                 count++
             }
         }
+        // A guessed field may be any text box (a site's search, a comment): only offer real matches there.
+        if (count == 0 && screen.classification.guessed) return null
         // Search the vault (and, for apps, remember the choice).
         val searchTitle = if (count == 0) "搜索 NyaPassword" else "搜索其他条目…"
         val sender = AutofillActivity.sender(context, AutofillActivity.MODE_PICK, target, specs)
         val sp = presentation(context, searchTitle, target.label, R.drawable.ic_autofill_search)
         val sb = Dataset.Builder(sp)
-        screen.allIds.forEach { sb.setValue(it, null, sp) }
+        screen.allIds.forEach { sb.put(screen, it, null, sp) }
         sb.setAuthentication(sender)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             inline(context, spec(count), searchTitle, target.label, R.drawable.ic_autofill_search)?.let { sb.setInlinePresentation(it) }

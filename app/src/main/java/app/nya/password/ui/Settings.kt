@@ -62,6 +62,8 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.runtime.DisposableEffect
 import androidx.credentials.CredentialManager
 import app.nya.password.BuildConfig
+import app.nya.password.autofill.Fill
+import app.nya.password.autofill.FillLog
 import app.nya.password.MainActivity
 import app.nya.password.core.AuditEntry
 import app.nya.password.core.DeviceRecord
@@ -693,9 +695,15 @@ private fun AboutCard(activity: MainActivity, checkUpdates: Boolean, onCheckUpda
 @Composable
 fun SetupGuideScreen(activity: MainActivity) {
     var autofillOn by remember { mutableStateOf(autofillEnabled(activity)) }
+    var reload by remember { mutableIntStateOf(0) }
     val owner = LocalLifecycleOwner.current
     DisposableEffect(owner) {
-        val o = LifecycleEventObserver { _, e -> if (e == Lifecycle.Event.ON_RESUME) autofillOn = autofillEnabled(activity) }
+        val o = LifecycleEventObserver { _, e ->
+            if (e == Lifecycle.Event.ON_RESUME) {
+                autofillOn = autofillEnabled(activity)
+                reload++
+            }
+        }
         owner.lifecycle.addObserver(o)
         onDispose { owner.lifecycle.removeObserver(o) }
     }
@@ -745,7 +753,7 @@ fun SetupGuideScreen(activity: MainActivity) {
                     "打开 Chrome → 右上角 ⋮ → 设置 → 自动填充服务",
                     "选择“使用其他服务自动填充”",
                     "完全退出并重新打开 Chrome（在最近任务里划掉）",
-                    "Edge 同理：设置 → 密码 / 自动填充 → 使用其他服务自动填充（版本不同菜单可能略有差异）",
+                    "Edge 没有这个选项，通过系统的兼容模式填写，不用设置；启用 NyaPassword 或更新后在最近任务里划掉 Edge 再打开。建议出现得稍慢，属正常",
                 )
             }
             Group(title = "4. 国内系统的设置位置") {
@@ -768,6 +776,50 @@ fun SetupGuideScreen(activity: MainActivity) {
                     Modifier.padding(16.dp), fontSize = 13.sp, color = muted,
                 )
             }
+            FillLogGroup(activity, reload)
+        }
+    }
+}
+
+/** "6. 诊断": the last autofill requests and what the service answered ([FillLog]). */
+@Composable
+private fun FillLogGroup(activity: MainActivity, reload: Int) {
+    var entries by remember { mutableStateOf(FillLog.read(activity)) }
+    LaunchedEffect(reload) { entries = FillLog.read(activity) }
+    val time = remember { SimpleDateFormat("M月d日 HH:mm:ss", Locale.CHINA) }
+    Group(title = "6. 诊断：最近的自动填充请求") {
+        Text(
+            "建议不出现时，先到其他应用的登录框里点一下，再回到这里看记录。没有任何记录说明系统没有把请求交给 NyaPassword；有记录则会写明这次为什么没有显示。只记录应用、网址和输入框的类型 / 名称 / 提示文字，不记录输入内容。",
+            Modifier.padding(16.dp), fontSize = 13.sp, color = muted,
+        )
+        if (entries.isEmpty()) {
+            Text("暂无记录", Modifier.padding(horizontal = 16.dp), fontSize = 14.sp)
+        }
+        entries.forEach { e ->
+            Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    "${time.format(Date(e.at))} · ${e.domain ?: Fill.appLabel(activity, e.pkg).ifEmpty { "（未知应用）" }}",
+                    fontSize = 13.sp, color = muted,
+                )
+                Text(e.outcome, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                val detail = listOf(e.pkg, e.fields, e.inline, "${e.ms} ms").filter { it.isNotBlank() }.joinToString(" · ")
+                Text(detail, fontSize = 12.sp, color = muted, lineHeight = 16.sp)
+                if (e.views.isNotBlank()) {
+                    Text(e.views, fontSize = 11.sp, color = muted, lineHeight = 14.sp, fontFamily = FontFamily.Monospace)
+                }
+            }
+        }
+        Row(Modifier.padding(16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = { entries = FillLog.read(activity) }) { Text("刷新") }
+            OutlinedButton(enabled = entries.isNotEmpty(), onClick = {
+                val cm = activity.getSystemService(android.content.ClipboardManager::class.java)
+                cm?.setPrimaryClip(android.content.ClipData.newPlainText("NyaPassword 自动填充诊断", FillLog.text(entries)))
+                activity.vault.say("已复制诊断记录")
+            }) { Text("复制全部") }
+            OutlinedButton(enabled = entries.isNotEmpty(), onClick = {
+                FillLog.clear(activity)
+                entries = emptyList()
+            }) { Text("清除记录") }
         }
     }
 }

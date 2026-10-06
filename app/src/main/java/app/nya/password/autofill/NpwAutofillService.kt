@@ -2,6 +2,7 @@ package app.nya.password.autofill
 
 import android.os.Build
 import android.os.CancellationSignal
+import android.os.SystemClock
 import android.service.autofill.AutofillService
 import android.service.autofill.FillCallback
 import android.service.autofill.FillRequest
@@ -24,39 +25,100 @@ import kotlinx.coroutines.withContext
 class NpwAutofillService : AutofillService() {
 
     override fun onFillRequest(request: FillRequest, cancellationSignal: CancellationSignal, callback: FillCallback) {
-        val structure = request.fillContexts.lastOrNull()?.structure ?: return callback.onSuccess(null)
-        val screen = runCatching { StructureParser.parse(structure) }.getOrElse {
-            Log.w(TAG, "parse failed", it)
-            return callback.onSuccess(null)
-        }
-        if (screen.classification.isEmpty || screen.packageName == packageName) return callback.onSuccess(null)
-        val specs: List<InlinePresentationSpec>? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        val started = SystemClock.elapsedRealtime()
+        val requestedSpecs: List<InlinePresentationSpec>? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             request.inlineSuggestionsRequest?.inlinePresentationSpecs
         } else {
             null
         }
+        var entry = FillLog.Entry(at = System.currentTimeMillis(), inline = describeInline(requestedSpecs), outcome = "")
+        fun log(outcome: String) {
+            entry = entry.copy(outcome = outcome, ms = SystemClock.elapsedRealtime() - started)
+            Log.i(TAG, "fill ${entry.pkg} ${entry.domain.orEmpty()} [${entry.fields}] [${entry.inline}] → ${entry.outcome} (${entry.ms} ms)")
+            runCatching { FillLog.add(this, entry) }
+        }
+
+        val structure = request.fillContexts.lastOrNull()?.structure ?: run {
+            log("请求里没有界面结构")
+            return callback.onSuccess(null)
+        }
+        val compat = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            request.flags and FillRequest.FLAG_COMPATIBILITY_MODE_REQUEST != 0
+        } else {
+            // Android 9 has compatibility mode but no flag for it
+            structure.activityComponent?.packageName.orEmpty().let { it in Browsers.BY_PACKAGE || UrlBars.idOf(it) != null }
+        }
+        // The system hands a response with any inline presentation to the keyboard and then
+        // never falls back to the drop-down, and keyboards may not draw suggestions for
+        // compatibility-mode fields (seen on a vivo keyboard in Edge): use the drop-down there.
+        val specs = if (compat) null else requestedSpecs
+        if (compat) {
+            val note = if (requestedSpecs.isNullOrEmpty()) "兼容模式" else "兼容模式（不用输入法内嵌建议，改用下拉框）"
+            entry = entry.copy(inline = listOf(note, entry.inline).filter { it.isNotEmpty() }.joinToString(" · "))
+        }
+        val screen = runCatching { StructureParser.parse(structure, compat) }.getOrElse {
+            Log.w(TAG, "parse failed", it)
+            log("解析界面失败：${it.message ?: it.javaClass.simpleName}")
+            return callback.onSuccess(null)
+        }
+        entry = entry.copy(pkg = screen.packageName, domain = screen.webDomain, fields = FillLog.fields(screen), views = FillLog.views(screen))
+        if (screen.packageName == packageName) return callback.onSuccess(null)
+        if (screen.classification.isEmpty) {
+            log("没有识别出用户名 / 密码 / 验证码输入框")
+            return callback.onSuccess(null)
+        }
+        // The system gives up after a few seconds; record it when our answer comes too late.
+        cancellationSignal.setOnCancelListener { log("系统已取消请求（可能是超时）") }
         val v = vault
         v.scope.launch {
+            var outcome = ""
             val response = runCatching {
                 val target = withContext(Dispatchers.IO) { FillTarget.resolve(this@NpwAutofillService, screen) }
-                    ?: return@runCatching null
+                if (target == null) {
+                    outcome = "浏览器没有提供网页地址，不填写"
+                    return@runCatching null
+                }
                 v.refresh()
                 v.checkAutoLock()
                 when {
-                    !v.lock.signedIn -> null
+                    !v.lock.signedIn -> null.also { outcome = "NyaPassword 尚未登录账号" }
                     !v.lock.unlocked -> Fill.lockedResponse(this@NpwAutofillService, screen, target, specs)
-                    else -> withContext(Dispatchers.IO) { Fill.response(this@NpwAutofillService, v, screen, target, specs) }
-                        .also { v.touch() }
+                        .also { outcome = "已锁定：提供“点按解锁”（${target.target}）" }
+                    else -> {
+                        var stats = "已解锁"
+                        withContext(Dispatchers.IO) {
+                            Fill.response(this@NpwAutofillService, v, screen, target, specs) { n, err ->
+                                stats = if (err == null && n == 0 && screen.classification.guessed) "已解锁：猜测的用户名框没有匹配条目，不显示（${target.target}）"
+                                else if (err == null) "已解锁：$n 个匹配条目 + 搜索（${target.target}）"
+                                else "已解锁，但读取匹配条目失败：${err.message ?: err.javaClass.simpleName}；只提供搜索"
+                            }
+                        }.also {
+                            outcome = stats
+                            v.touch()
+                        }
+                    }
                 }
-            }.onFailure { Log.w(TAG, "fill failed", it) }.getOrNull()
-            if (!cancellationSignal.isCanceled) {
-                runCatching { callback.onSuccess(response) }
+            }.getOrElse {
+                Log.w(TAG, "fill failed", it)
+                outcome = "出错：${it.message ?: it.javaClass.simpleName}"
+                null
             }
+            if (cancellationSignal.isCanceled) return@launch
+            val sent = runCatching { callback.onSuccess(response) }
+            log(sent.exceptionOrNull()?.let { "$outcome；回传给系统失败：${it.message ?: it.javaClass.simpleName}" } ?: outcome)
         }
+    }
+
+    /** What the keyboard asked for: inline suggestions, and whether it draws our style. */
+    private fun describeInline(specs: List<InlinePresentationSpec>?): String {
+        if (specs.isNullOrEmpty() || Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return ""
+        val ok = specs.count { Fill.inlineV1(it) }
+        return "输入法请求内嵌建议 ${specs.size} 条，可显示 $ok 条"
     }
 
     override fun onSaveRequest(request: SaveRequest, callback: SaveCallback) {
         val structure = request.fillContexts.lastOrNull()?.structure ?: return callback.onSuccess()
+        // (at save time the inputs have text, so compatibility mode needs no special case)
         val screen = runCatching { StructureParser.parse(structure) }.getOrNull() ?: return callback.onSuccess()
         val password = screen.valueOf(Role.PASSWORD)
         if (password.isNullOrEmpty()) return callback.onSuccess()

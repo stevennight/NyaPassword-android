@@ -1,11 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- The settings link opens the app. Browsers without native autofill
-     support are served through the system's compatibility mode (Android 9+);
-     Chrome, Edge and Firefox use the native API ("use another service for
-     autofill" in their settings) and are not listed here. -->
+     support are served through the system's compatibility mode (Android 9+;
+     the page address then comes from the address bar, see UrlBars.kt).
+     Chrome and Firefox use the native API ("use another service for
+     autofill" in their settings) and are not listed here; Edge has no such
+     setting and needs compatibility mode. -->
 <autofill-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:settingsActivity="app.nya.password.MainActivity"
     android:supportsInlineSuggestions="true">
+    <compatibility-package android:name="com.microsoft.emmx" android:maxLongVersionCode="10000000000" />
+    <compatibility-package android:name="com.microsoft.emmx.beta" android:maxLongVersionCode="10000000000" />
+    <compatibility-package android:name="com.microsoft.emmx.canary" android:maxLongVersionCode="10000000000" />
+    <compatibility-package android:name="com.microsoft.emmx.dev" android:maxLongVersionCode="10000000000" />
     <compatibility-package android:name="com.UCMobile" android:maxLongVersionCode="10000000000" />
     <compatibility-package android:name="com.tencent.mtt" android:maxLongVersionCode="10000000000" />
     <compatibility-package android:name="com.quark.browser" android:maxLongVersionCode="10000000000" />
