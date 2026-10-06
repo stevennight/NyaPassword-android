@@ -29,9 +29,22 @@ object FillLog {
 
     private const val MAX = 20
     private const val KEY = "entries"
+    private const val ENABLED = "enabled"
     private val serializer = ListSerializer(Entry.serializer())
 
     private fun prefs(context: Context) = context.getSharedPreferences("autofill_log", Context.MODE_PRIVATE)
+
+    /** Off by default: turned on from the setup guide while chasing a problem. */
+    fun enabled(context: Context): Boolean = prefs(context).getBoolean(ENABLED, false)
+
+    /** Turning it off also drops what was recorded. */
+    @Synchronized
+    fun setEnabled(context: Context, on: Boolean) {
+        prefs(context).edit {
+            putBoolean(ENABLED, on)
+            if (!on) remove(KEY)
+        }
+    }
 
     @Synchronized
     fun read(context: Context): List<Entry> = runCatching {
@@ -40,6 +53,7 @@ object FillLog {
 
     @Synchronized
     fun add(context: Context, e: Entry) {
+        if (!enabled(context)) return
         val list = (listOf(e) + read(context)).take(MAX)
         prefs(context).edit { putString(KEY, PlainJson.encodeToString(serializer, list)) }
     }

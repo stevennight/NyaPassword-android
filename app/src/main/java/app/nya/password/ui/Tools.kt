@@ -38,6 +38,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.nya.password.MainActivity
@@ -169,6 +170,10 @@ private val ISSUES = listOf(
     Triple("insecure", "不安全的网址", "在 http（未加密）页面上使用的密码"),
 )
 
+/** "https://user@a.example.com:8443/login?x" → "a.example.com:8443"; bare domains pass through. */
+private fun hostOf(url: String): String =
+    url.trim().substringAfter("://").substringBefore('/').substringBefore('?').substringBefore('#').substringAfterLast('@').ifBlank { url }
+
 /** Security report and vault health check, computed on the device (the web vault's SecurityPage). */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -217,21 +222,31 @@ fun SecurityScreen(activity: MainActivity, pad: PaddingValues) {
             val list = r.findings.filter { it.issue == tab }
             if (list.isEmpty()) Text("没有问题 🎉", Modifier.padding(16.dp), color = muted)
             list.forEachIndexed { i, f ->
-                Row(
-                    Modifier.fillMaxWidth().clickable { activity.open(Route.Detail(f.vaultId, f.itemId)) }.padding(horizontal = 16.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(f.title.ifBlank { "（无标题）" }, Modifier.weight(1f), fontSize = 14.5.sp)
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        when (tab) {
-                            "reused" -> "${f.detail} 个条目共用"
-                            "old" -> "${f.detail} 天"
-                            "weak" -> "强度 ${f.detail}/4"
-                            else -> f.detail
-                        },
-                        fontSize = 12.5.sp, color = muted,
-                    )
+                val open = Modifier.fillMaxWidth().clickable { activity.open(Route.Detail(f.vaultId, f.itemId)) }.padding(horizontal = 16.dp, vertical = 12.dp)
+                val title = f.title.ifBlank { "（无标题）" }
+                if (tab == "totp_available" || tab == "insecure") {
+                    // the detail is the item's full URL: show only the host, under the title
+                    Column(open, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(title, fontSize = 14.5.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        Text(
+                            if (tab == "insecure") "http://${hostOf(f.detail)}" else hostOf(f.detail),
+                            fontSize = 12.5.sp, color = muted, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                } else {
+                    Row(open, verticalAlignment = Alignment.CenterVertically) {
+                        Text(title, Modifier.weight(1f), fontSize = 14.5.sp)
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            when (tab) {
+                                "reused" -> "${f.detail} 个条目共用"
+                                "old" -> "${f.detail} 天"
+                                "weak" -> "强度 ${f.detail}/4"
+                                else -> f.detail
+                            },
+                            fontSize = 12.5.sp, color = muted, maxLines = 1,
+                        )
+                    }
                 }
                 if (i < list.size - 1) androidx.compose.material3.HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant)
             }

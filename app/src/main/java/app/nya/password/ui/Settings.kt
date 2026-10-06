@@ -801,13 +801,28 @@ fun SetupGuideScreen(activity: MainActivity) {
     }
 }
 
-/** "6. 诊断": the last autofill requests and what the service answered ([FillLog]). */
+/** "6. 诊断": off by default; when on, the last autofill requests and what the service answered ([FillLog]). */
 @Composable
 private fun FillLogGroup(activity: MainActivity, reload: Int) {
-    var entries by remember { mutableStateOf(FillLog.read(activity)) }
-    LaunchedEffect(reload) { entries = FillLog.read(activity) }
+    var on by remember { mutableStateOf(FillLog.enabled(activity)) }
+    var entries by remember { mutableStateOf(if (on) FillLog.read(activity) else emptyList()) }
+    LaunchedEffect(reload, on) {
+        // records kept from before the switch existed go away while it is off
+        if (on) entries = FillLog.read(activity) else FillLog.clear(activity)
+    }
     val time = remember { SimpleDateFormat("M月d日 HH:mm:ss", Locale.CHINA) }
-    Group(title = "6. 诊断：最近的自动填充请求") {
+    Group(title = "6. 诊断") {
+        SwitchField(
+            "记录自动填充请求",
+            "排查建议不出现时打开；关闭后不再记录，并清除已有记录",
+            checked = on,
+            divider = on,
+        ) {
+            on = it
+            FillLog.setEnabled(activity, it)
+            if (!it) entries = emptyList()
+        }
+        if (!on) return@Group
         Text(
             "建议不出现时，先到其他应用的登录框里点一下，再回到这里看记录。没有任何记录说明系统没有把请求交给 NyaPassword；有记录则会写明这次为什么没有显示。只记录应用、网址和输入框的类型 / 名称 / 提示文字，不记录输入内容。",
             Modifier.padding(16.dp), fontSize = 13.sp, color = muted,
