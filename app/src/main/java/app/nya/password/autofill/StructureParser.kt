@@ -27,6 +27,12 @@ class ParsedScreen(
      * the suggestions on screen.
      */
     val ignoredIds: List<AutofillId> = emptyList(),
+    /**
+     * The browser's address bar sits in the lower half of its window. In compatibility
+     * mode suggestions then show as empty cells or vanish (Chrome / Edge, same for other
+     * password managers); moving the bar to the top fixes it.
+     */
+    val urlBarAtBottom: Boolean = false,
 ) {
     fun idsOf(role: Role): List<AutofillId> = when (role) {
         Role.USERNAME -> classification.username
@@ -62,9 +68,13 @@ object StructureParser {
         val urlBarId = UrlBars.idOf(packageName)
         var urlBarDomain: Pair<String, String?>? = null
         val ignored = ArrayList<AutofillId>()
+        var urlBarAtBottom = false
+        var windowHeight = 0
 
-        fun visit(node: AssistStructure.ViewNode, inherited: Pair<String, String?>?) {
+        // offsetY: the parent's top in window coordinates (minus its scroll), for the address bar's position
+        fun visit(node: AssistStructure.ViewNode, inherited: Pair<String, String?>?, offsetY: Int) {
             nodeCount++
+            val top = offsetY + node.top
             val domain = node.webDomain?.takeIf { it.isNotBlank() }?.let { d ->
                 d to (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) node.webScheme else null)
             } ?: inherited
@@ -74,6 +84,7 @@ object StructureParser {
             // their HTML id as a view id, but never a package.
             val isUrlBar = urlBarId != null && node.idEntry == urlBarId && node.idPackage == packageName
             if (isUrlBar && urlBarDomain == null) urlBarDomain = UrlBars.domainOf(node.text?.toString())
+            if (isUrlBar && windowHeight > 0 && top + node.height / 2 > windowHeight / 2) urlBarAtBottom = true
             val id = node.autofillId
             val emptyCompatInput = compatMode && node.autofillType == View.AUTOFILL_TYPE_NONE &&
                 node.className?.endsWith("EditText") == true
@@ -103,10 +114,14 @@ object StructureParser {
             } else if (id != null) {
                 ignored += id
             }
-            for (i in 0 until node.childCount) visit(node.getChildAt(i), domain)
+            for (i in 0 until node.childCount) visit(node.getChildAt(i), domain, top - node.scrollY)
         }
 
-        for (w in 0 until structure.windowNodeCount) visit(structure.getWindowNodeAt(w).rootViewNode, null)
+        for (w in 0 until structure.windowNodeCount) {
+            val window = structure.getWindowNodeAt(w)
+            windowHeight = window.height
+            visit(window.rootViewNode, null, 0)
+        }
 
         val cls = FieldClassifier.classify(views, guessFocused = compatMode)
         // the domain of the login fields themselves (an iframe's own domain), else the page's
@@ -123,6 +138,7 @@ object StructureParser {
             nodeCount = nodeCount,
             compatMode = compatMode,
             ignoredIds = ignored,
+            urlBarAtBottom = urlBarAtBottom,
         )
     }
 }

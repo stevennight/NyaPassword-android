@@ -71,6 +71,9 @@ class NpwAutofillService : AutofillService() {
             return callback.onSuccess(null)
         }
         entry = entry.copy(pkg = screen.packageName, domain = screen.webDomain, fields = FillLog.fields(screen), views = FillLog.views(screen))
+        if (screen.urlBarAtBottom) {
+            entry = entry.copy(inline = listOf(entry.inline, "地址栏在底部：建议可能显示为空白或一闪而过，请在浏览器设置里把地址栏移到顶部").filter { it.isNotEmpty() }.joinToString(" · "))
+        }
         if (screen.packageName == packageName) return callback.onSuccess(null)
         if (screen.classification.isEmpty) {
             log("没有识别出用户名 / 密码 / 验证码输入框")
