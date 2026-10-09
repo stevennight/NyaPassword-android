@@ -37,10 +37,15 @@ object Saver {
         linkIfApp(vault, item.vaultId, item.itemId, s.target)
     }
 
+    /** Only mask characters: what some browsers report for a password input in compatibility mode. */
+    fun masked(value: String): Boolean = value.isNotEmpty() && value.all { it in MASK_CHARS }
+
+    private const val MASK_CHARS = "•●∙⋅·*＊◦⁕"
+
     /** A new login for the site / app. Returns the item id. */
-    fun create(vault: Vault, vaultId: String, s: PendingSave): String {
+    fun create(vault: Vault, vaultId: String, s: PendingSave, title: String = s.target.label): String {
         var doc = ItemDoc(vault.callNow { it.newItem("login") })
-        doc = doc.withTitle(s.target.label)
+        doc = doc.withTitle(title.trim().ifEmpty { s.target.label })
         if (doc.field("username") != null) doc = doc.withFieldValue("username", s.username)
         doc = if (doc.field("password") != null) {
             doc.withFieldValue("password", s.password)

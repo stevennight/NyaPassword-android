@@ -1,6 +1,7 @@
 package app.nya.password
 
 import app.nya.password.autofill.FieldClassifier
+import app.nya.password.autofill.Saver
 import app.nya.password.autofill.ViewDesc
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -214,5 +215,26 @@ class FieldClassifierTest {
     fun nothingToFill() {
         val c = FieldClassifier.classify(views(view(hint = "留言"), view(id = "comment")))
         assertTrue(c.isEmpty)
+    }
+
+    @Test
+    fun usernameFallbackSkipsIgnoredFields() {
+        val c = FieldClassifier.classify(
+            views(
+                view(html = mapOf("type" to "text", "name" to "u")),
+                view(html = mapOf("type" to "text", "name" to "captcha")),
+                view(html = mapOf("type" to "password", "name" to "p")),
+            ),
+        )
+        assertEquals(listOf(0), c.username)
+        assertEquals(listOf(2), c.password)
+    }
+
+    @Test
+    fun maskedPasswords() {
+        assertTrue(Saver.masked("••••••"))
+        assertTrue(Saver.masked("********"))
+        assertFalse(Saver.masked(""))
+        assertFalse(Saver.masked("p•ss"))
     }
 }

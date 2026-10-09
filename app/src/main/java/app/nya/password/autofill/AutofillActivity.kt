@@ -26,12 +26,16 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -46,7 +50,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.nya.password.core.Content
@@ -287,6 +295,12 @@ class AutofillActivity : SecureActivity() {
         var busy by remember { mutableStateOf(false) }
         var error by remember { mutableStateOf("") }
         var verifyFor by remember { mutableStateOf<ItemView?>(null) }
+        // what was recognized, editable before it is saved
+        var title by remember { mutableStateOf(save.target.label) }
+        var username by remember { mutableStateOf(save.username) }
+        var password by remember { mutableStateOf(save.password) }
+        var showPassword by remember { mutableStateOf(true) }
+        val edited = save.copy(username = username.trim(), password = password)
         LaunchedEffect(Unit) { matches = withContext(Dispatchers.IO) { runCatching { Saver.matches(v, save) }.getOrDefault(emptyList()) } }
 
         fun run(block: () -> String) {
@@ -311,7 +325,7 @@ class AutofillActivity : SecureActivity() {
             Column(Modifier.verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally) {
                 UnlockPanel(this@AutofillActivity, "此条目需要验证", "更新“${item.title}”前，请验证身份", verify = true) {
                     verifyFor = null
-                    run { Saver.update(v, item, save); "已更新“${item.title}”" }
+                    run { Saver.update(v, item, edited); "已更新“${item.title}”" }
                 }
                 TextButton(onClick = { verifyFor = null }) { Text("返回") }
             }
@@ -321,19 +335,42 @@ class AutofillActivity : SecureActivity() {
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("保存到 NyaPassword", fontSize = 22.sp, fontWeight = FontWeight.Bold)
             Text("${if (save.target.browser) "网站" else "应用"}：${save.target.label}", color = muted)
-            Text("用户名：${save.username.ifEmpty { "（无）" }}")
-            Text("密码：${"•".repeat(save.password.length.coerceAtMost(12))}")
+            Text("识别出的内容有误时，可以先改再保存。", fontSize = 13.sp, color = muted)
+            OutlinedTextField(
+                username, { username = it }, Modifier.fillMaxWidth(),
+                label = { Text("用户名") }, singleLine = true, enabled = !busy,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+            )
+            OutlinedTextField(
+                password, { password = it }, Modifier.fillMaxWidth(),
+                label = { Text("密码") }, singleLine = true, enabled = !busy,
+                textStyle = MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Monospace),
+                visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                trailingIcon = {
+                    IconButton(onClick = { showPassword = !showPassword }) {
+                        Icon(if (showPassword) Icons.Filled.VisibilityOff else Icons.Filled.Visibility, if (showPassword) "隐藏" else "显示")
+                    }
+                },
+                isError = password.isEmpty(),
+                supportingText = if (password.isEmpty()) {
+                    { Text(if (save.passwordMasked) "浏览器只提供了打码后的密码（••••），请输入真实密码" else "请输入密码") }
+                } else {
+                    null
+                },
+            )
+            val canSave = !busy && password.isNotEmpty()
             val list = matches
             if (list == null) {
                 Text("正在查找已有条目…", color = muted)
             } else {
                 list.forEach { (item, c) ->
-                    val same = (c.username ?: "") == save.username
+                    val same = (c.username ?: "") == edited.username
                     // a "使用前需要验证" item does not tell whether the submitted password is its own
-                    val unchanged = !item.reprompt && same && c.password == save.password
+                    val unchanged = !item.reprompt && same && c.password == edited.password
                     OutlinedButton(
-                        onClick = { if (item.reprompt) verifyFor = item else run { Saver.update(v, item, save); "已更新“${item.title}”" } },
-                        enabled = !busy && !unchanged,
+                        onClick = { if (item.reprompt) verifyFor = item else run { Saver.update(v, item, edited); "已更新“${item.title}”" } },
+                        enabled = canSave && !unchanged,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Text(
@@ -342,15 +379,19 @@ class AutofillActivity : SecureActivity() {
                         )
                     }
                 }
+                OutlinedTextField(
+                    title, { title = it }, Modifier.fillMaxWidth(),
+                    label = { Text("新建登录项的标题") }, singleLine = true, enabled = !busy,
+                )
                 Button(
                     onClick = {
                         run {
                             val vaultId = v.vaults.firstOrNull()?.id ?: error("没有可用的保险库")
-                            Saver.create(v, vaultId, save)
+                            Saver.create(v, vaultId, edited, title)
                             "已保存到 NyaPassword"
                         }
                     },
-                    enabled = !busy,
+                    enabled = canSave,
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text("新建登录项") }
             }

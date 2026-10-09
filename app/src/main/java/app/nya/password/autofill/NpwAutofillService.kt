@@ -129,14 +129,23 @@ class NpwAutofillService : AutofillService() {
     }
 
     override fun onSaveRequest(request: SaveRequest, callback: SaveCallback) {
-        val structure = request.fillContexts.lastOrNull()?.structure ?: return callback.onSuccess()
-        // (at save time the inputs have text, so compatibility mode needs no special case)
-        val screen = runCatching { StructureParser.parse(structure) }.getOrNull() ?: return callback.onSuccess()
-        val password = screen.valueOf(Role.PASSWORD)
-        if (password.isNullOrEmpty()) return callback.onSuccess()
-        val username = screen.valueOf(Role.USERNAME).orEmpty()
+        // The structures are the ones of the fill requests (with the current values of the
+        // fields we answered for): parse them the same way, or compatibility mode loses the
+        // inputs that were empty then.
+        val compat = request.clientState?.getBoolean(Fill.STATE_COMPAT) ?: false
+        // the last screen first; a multi-step login has its account screen before it
+        val screens = request.fillContexts.reversed().mapNotNull { runCatching { StructureParser.parse(it.structure, compat) }.getOrNull() }
+        val screen = screens.firstOrNull { it.valueOf(Role.PASSWORD) != null } ?: return callback.onSuccess()
+        val password = screen.valueOf(Role.PASSWORD).orEmpty()
+        // browsers in compatibility mode may report the password as it is shown ("••••")
+        val masked = Saver.masked(password)
+        val username = (listOf(screen) + screens.filter { it !== screen && it.packageName == screen.packageName })
+            .firstNotNullOfOrNull { s -> s.valueOf(Role.USERNAME)?.trim()?.takeIf { it.isNotEmpty() && !Saver.masked(it) } }
+            .orEmpty()
         val target = FillTarget.resolve(this, screen) ?: return callback.onSuccess()
-        val token = PendingSaves.put(PendingSave(target, username, password, screen.classification.newPassword))
+        val token = PendingSaves.put(
+            PendingSave(target, username, if (masked) "" else password, screen.classification.newPassword, passwordMasked = masked),
+        )
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             // The user picks "update" or "new" (after unlocking) in our activity.
             callback.onSuccess(AutofillActivity.saveSender(this, token))
@@ -150,6 +159,10 @@ class NpwAutofillService : AutofillService() {
                     return@launch
                 }
                 val save = PendingSaves.take(token) ?: return@launch
+                if (save.passwordMasked) {
+                    Toast.makeText(this@NpwAutofillService, "浏览器只提供了打码后的密码，未保存", Toast.LENGTH_LONG).show()
+                    return@launch
+                }
                 val msg = runCatching { withContext(Dispatchers.IO) { Saver.saveAuto(v, save) } }.getOrElse { "保存失败：${it.message}" }
                 Toast.makeText(this@NpwAutofillService, msg, Toast.LENGTH_LONG).show()
             }
@@ -163,7 +176,14 @@ class NpwAutofillService : AutofillService() {
 }
 
 /** What a save request carries to [AutofillActivity] (kept in memory, not in the intent). */
-data class PendingSave(val target: FillTarget, val username: String, val password: String, val newPassword: Boolean)
+data class PendingSave(
+    val target: FillTarget,
+    val username: String,
+    val password: String,
+    val newPassword: Boolean,
+    /** The app gave the password only as dots: [password] is empty, the user types it. */
+    val passwordMasked: Boolean = false,
+)
 
 object PendingSaves {
     private val map = HashMap<String, PendingSave>()

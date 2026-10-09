@@ -162,7 +162,8 @@ class MainActivity : SecureActivity() {
         }
         val top = stack.lastOrNull()
         if (top != null) {
-            Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))) {
+            // edge to edge: the pages draw below the status and navigation bars otherwise
+            Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
                 when (top) {
                     is Route.Detail -> ItemDetailScreen(this@MainActivity, top.vaultId, top.itemId)
                     is Route.Edit -> EditorScreen(this@MainActivity, top.vaultId, top.itemId, top.template)

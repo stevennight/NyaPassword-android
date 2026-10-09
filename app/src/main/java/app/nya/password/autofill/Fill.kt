@@ -248,6 +248,7 @@ object Fill {
             r.setAuthentication(ids, sender, p)
         }
         saveInfo(screen)?.let { r.setSaveInfo(it) }
+        r.setClientState(clientState(screen))
         ignore(r, screen)
         return r.build()
     }
@@ -287,8 +288,12 @@ object Fill {
                 count++
             }
         }
-        // A guessed field may be any text box (a site's search, a comment): only offer real matches there.
-        if (count == 0 && screen.classification.guessed) return null
+        // A guessed field may be any text box (a site's search, a comment): only offer real matches
+        // there. The account step of a multi-step login still keeps its username for the save.
+        if (count == 0 && screen.classification.guessed) {
+            val delayed = saveInfo(screen) ?: return null
+            return FillResponse.Builder().setSaveInfo(delayed).setClientState(clientState(screen)).build()
+        }
         // Search the vault (and, for apps, remember the choice).
         val searchTitle = if (count == 0) "搜索 NyaPassword" else "搜索其他条目…"
         val sender = AutofillActivity.sender(context, AutofillActivity.MODE_PICK, target, specs, maxInline)
@@ -301,6 +306,7 @@ object Fill {
         }
         r.addDataset(sb.build())
         saveInfo(screen)?.let { r.setSaveInfo(it) }
+        r.setClientState(clientState(screen))
         ignore(r, screen)
         return r.build()
     }
@@ -310,11 +316,26 @@ object Fill {
         if (screen.ignoredIds.isNotEmpty()) r.setIgnoredIds(*screen.ignoredIds.toTypedArray())
     }
 
-    /** Offer to save when the screen has a password field. */
+    /** Read back by [NpwAutofillService.onSaveRequest]: how to parse the saved screens. */
+    const val STATE_COMPAT = "compat"
+
+    fun clientState(screen: ParsedScreen) = Bundle().apply { putBoolean(STATE_COMPAT, screen.compatMode) }
+
+    /**
+     * Offer to save when the screen has a password field. A screen with only an
+     * account field (the first step of a multi-step login, Android 10+) delays
+     * the save: the password screen's request then carries this screen too, and
+     * the save takes the username from it.
+     */
     fun saveInfo(screen: ParsedScreen): SaveInfo? {
         val pw = screen.idsOf(Role.PASSWORD)
-        if (pw.isEmpty()) return null
         val user = screen.idsOf(Role.USERNAME)
+        if (pw.isEmpty()) {
+            if (user.isEmpty() || Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return null
+            return SaveInfo.Builder(SaveInfo.SAVE_DATA_TYPE_USERNAME, user.toTypedArray())
+                .setFlags(SaveInfo.FLAG_DELAY_SAVE)
+                .build()
+        }
         val type = SaveInfo.SAVE_DATA_TYPE_PASSWORD or (if (user.isNotEmpty()) SaveInfo.SAVE_DATA_TYPE_USERNAME else 0)
         val b = SaveInfo.Builder(type, pw.toTypedArray())
         if (user.isNotEmpty()) b.setOptionalIds(user.toTypedArray())

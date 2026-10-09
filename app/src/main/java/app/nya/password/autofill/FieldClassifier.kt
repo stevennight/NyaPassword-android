@@ -208,7 +208,7 @@ object FieldClassifier {
         // No username found: the text field just before the first password field.
         if (usernames.isEmpty() && passwords.isNotEmpty()) {
             val first = passwords.first()
-            candidates.lastOrNull { it.index < first && it.index !in roles && plainText(it) }?.let { usernames += it.index }
+            candidates.lastOrNull { it.index < first && it.index !in roles && it.index !in ignored && plainText(it) }?.let { usernames += it.index }
         }
         // Several username guesses: prefer the ones closest before the password.
         val user = if (usernames.size > 1 && passwords.isNotEmpty()) {
