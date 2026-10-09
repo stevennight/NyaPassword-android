@@ -66,6 +66,7 @@ import app.nya.password.autofill.Fill
 import app.nya.password.autofill.FillLog
 import app.nya.password.MainActivity
 import app.nya.password.core.AuditEntry
+import app.nya.password.core.AutoLock
 import app.nya.password.core.DeviceRecord
 import app.nya.password.core.EmergencyKit
 import app.nya.password.core.Updater
@@ -82,7 +83,8 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-private val LOCK_OPTIONS = listOf(1 to "1 分钟", 5 to "5 分钟", 10 to "10 分钟", 30 to "30 分钟", 60 to "1 小时", 240 to "4 小时", 0 to "从不（仅锁屏 / 重启时）")
+/** The "自定义…" entry of the auto-lock choices. */
+private const val LOCK_CUSTOM = -1
 
 /** The settings pages: the desktop / web client's categories that apply on Android, in the same order. */
 private enum class SettingsCategory(val title: String, val summary: String) {
@@ -131,6 +133,7 @@ fun SettingsScreen(activity: MainActivity, pad: PaddingValues) {
     var atStart by remember { mutableStateOf(v.prefs.biometricAtStart) }
     var pinState by remember { mutableStateOf(v.pinStatus()) }
     var pinDialog by remember { mutableStateOf(false) }
+    var customLock by remember { mutableStateOf(false) }
     var removePin by remember { mutableStateOf(false) }
     // the open category (null: the list), saved by name
     var catName by rememberSaveable {
@@ -191,11 +194,18 @@ fun SettingsScreen(activity: MainActivity, pad: PaddingValues) {
                     }
 
                     SettingsCategory.SECURITY -> Group(title = "解锁与锁定") {
-                        Field("空闲后自动锁定", "这段时间没有使用就锁定（自动填充也算使用）") {
-                            Select(LOCK_OPTIONS, autoLock) {
-                                autoLock = it
-                                v.prefs.autoLockMinutes = it
-                                v.touch()
+                        Field(
+                            "空闲后自动锁定",
+                            "这段时间没有使用就锁定（自动填充也算使用）" + if (autoLock == 0) "；选“从不”时只在手动锁定、屏幕关闭（如已开启）或重启时锁定" else "",
+                        ) {
+                            Select(AutoLock.options(autoLock).map { it to AutoLock.label(it) } + (LOCK_CUSTOM to "自定义…"), autoLock) {
+                                if (it == LOCK_CUSTOM) {
+                                    customLock = true
+                                } else {
+                                    autoLock = it
+                                    v.prefs.autoLockMinutes = it
+                                    v.touch()
+                                }
                             }
                         }
                         SwitchField("屏幕关闭时锁定", checked = screenOff) {
@@ -439,6 +449,32 @@ fun SettingsScreen(activity: MainActivity, pad: PaddingValues) {
             bio = v.prefs.biometric
             pinState = v.pinStatus()
         }
+    }
+    if (customLock) {
+        var text by remember { mutableStateOf((autoLock.takeIf { it > 0 } ?: 30).toString()) }
+        val minutes = text.trim().toIntOrNull()?.takeIf { it in 1..AutoLock.MAX }
+        AlertDialog(
+            onDismissRequest = { customLock = false },
+            title = { Text("自定义自动锁定") },
+            text = {
+                OutlinedTextField(
+                    text, { t -> text = t.filter(Char::isDigit).take(5) }, singleLine = true,
+                    label = { Text("分钟（1–${AutoLock.MAX}）") },
+                    supportingText = { Text(minutes?.let { AutoLock.label(it) } ?: "最长 7 天") },
+                    isError = minutes == null,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                )
+            },
+            confirmButton = {
+                TextButton(enabled = minutes != null, onClick = {
+                    customLock = false
+                    autoLock = minutes!!
+                    v.prefs.autoLockMinutes = minutes
+                    v.touch()
+                }) { Text("确定") }
+            },
+            dismissButton = { TextButton(onClick = { customLock = false }) { Text("取消") } },
+        )
     }
     if (pinDialog) {
         PinDialog(activity, change = pinState.set) {

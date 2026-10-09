@@ -14,9 +14,9 @@ import androidx.core.content.edit
 class Prefs(context: Context) {
     private val p = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
 
-    /** Lock after this many minutes without use; 0 = only when the screen turns off / the app restarts. */
+    /** Lock after this many minutes without use; 0 = only when the screen turns off / the app restarts ([AutoLock]). */
     var autoLockMinutes: Int
-        get() = p.getInt("auto_lock_minutes", 5)
+        get() = p.getInt("auto_lock_minutes", AutoLock.DEFAULT).takeIf(AutoLock::valid) ?: AutoLock.DEFAULT
         set(v) = p.edit { putInt("auto_lock_minutes", v) }
 
     var lockOnScreenOff: Boolean
