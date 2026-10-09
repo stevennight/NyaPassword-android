@@ -1,7 +1,7 @@
 [package]
 name = "npw-android"
 description = "NyaPassword Android: the shared Rust core (npw-ffi) as the library the app loads"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2021"
 license = "MIT"
 publish = false
