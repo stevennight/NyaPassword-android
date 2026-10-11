@@ -36,6 +36,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -52,12 +53,12 @@ import app.nya.password.vault
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
-/** The password generator (the web vault's Generator): random, memorable, PIN. */
+/** The generator (the web vault's Generator): random, memorable, PIN passwords; usernames. */
 @Composable
-fun Generator(onUse: ((String) -> Unit)? = null) {
+fun Generator(start: String = "random", onUse: ((String) -> Unit)? = null) {
     val context = LocalContext.current
     val v = context.vault
-    var kind by rememberSaveable { mutableStateOf("random") }
+    var kind by rememberSaveable { mutableStateOf(start) }
     var length by rememberSaveable { mutableIntStateOf(20) }
     var upper by rememberSaveable { mutableStateOf(true) }
     var lower by rememberSaveable { mutableStateOf(true) }
@@ -69,6 +70,12 @@ fun Generator(onUse: ((String) -> Unit)? = null) {
     var cap by rememberSaveable { mutableStateOf(true) }
     var wordDigits by rememberSaveable { mutableStateOf(true) }
     var pinLen by rememberSaveable { mutableIntStateOf(6) }
+    var uStyle by rememberSaveable { mutableStateOf("words") }
+    var uWords by rememberSaveable { mutableIntStateOf(2) }
+    var uSyllables by rememberSaveable { mutableIntStateOf(3) }
+    var uSep by rememberSaveable { mutableStateOf("") }
+    var uCap by rememberSaveable { mutableStateOf(true) }
+    var uDigits by rememberSaveable { mutableStateOf(true) }
     var nonce by remember { mutableIntStateOf(0) }
 
     val recipe = when (kind) {
@@ -79,8 +86,13 @@ fun Generator(onUse: ((String) -> Unit)? = null) {
         "memorable" -> buildJsonObject {
             put("kind", "memorable"); put("words", words); put("separator", sep); put("capitalize", cap); put("digits", wordDigits)
         }
-        else -> buildJsonObject { put("kind", "pin"); put("length", pinLen) }
+        "pin" -> buildJsonObject { put("kind", "pin"); put("length", pinLen) }
+        else -> buildJsonObject {
+            put("kind", "username"); put("style", uStyle); put("words", if (uStyle == "words") uWords else uSyllables)
+            put("separator", uSep); put("capitalize", uCap); put("digits", uDigits)
+        }
     }.toString()
+    val isUser = kind == "username"
     var result by remember { mutableStateOf(Generated()) }
     LaunchedEffect(recipe, nonce) {
         result = runCatching { decode<Generated>(generate(recipe)) }.getOrDefault(Generated())
@@ -94,17 +106,17 @@ fun Generator(onUse: ((String) -> Unit)? = null) {
 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(
-            result.password,
+            if (isUser) AnnotatedString(result.password) else pwChars(result.password),
             Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.surfaceVariant).padding(14.dp),
             fontFamily = FontFamily.Monospace, fontSize = 19.sp, fontWeight = FontWeight.SemiBold,
         )
-        Text("${Math.round(result.bits)} 位熵 · $strength", fontSize = 12.5.sp, color = muted)
+        Text(if (isUser) "约 ${Math.round(result.bits)} 位随机性" else "${Math.round(result.bits)} 位熵 · $strength", fontSize = 12.5.sp, color = muted)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(onClick = { nonce++ }) { Text("↻ 换一个") }
-            OutlinedButton(onClick = { copy(v, context, result.password, "", true) }) { Text("复制") }
+            OutlinedButton(onClick = { copy(v, context, result.password, "", !isUser) }) { Text("复制") }
             if (onUse != null) Button(onClick = { onUse(result.password) }) { Text("使用") }
         }
-        Seg(listOf("random" to "随机字符", "memorable" to "易记口令", "pin" to "PIN"), kind) { kind = it }
+        Seg(listOf("random" to "随机字符", "memorable" to "易记口令", "pin" to "PIN", "username" to "用户名"), kind) { kind = it }
         when (kind) {
             "random" -> {
                 Text("长度 $length", fontSize = 13.sp)
@@ -128,9 +140,24 @@ fun Generator(onUse: ((String) -> Unit)? = null) {
                 }
                 Checks(listOf("大写首字母" to cap, "加数字" to wordDigits)) { i, b -> if (i == 0) cap = b else wordDigits = b }
             }
-            else -> {
+            "pin" -> {
                 Text("位数 $pinLen", fontSize = 13.sp)
                 Slider(pinLen.toFloat(), { pinLen = it.toInt() }, valueRange = 4f..12f)
+            }
+            else -> {
+                Seg(listOf("words" to "单词组合", "name" to "虚构名字"), uStyle) { uStyle = it }
+                if (uStyle == "words") {
+                    Text("单词数 $uWords", fontSize = 13.sp)
+                    Slider(uWords.toFloat(), { uWords = it.toInt() }, valueRange = 2f..3f)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("分隔符  ", fontSize = 13.sp)
+                        Seg(listOf("" to "无", "_" to "_", "." to ".", "-" to "-"), uSep) { uSep = it }
+                    }
+                } else {
+                    Text("音节数 $uSyllables", fontSize = 13.sp)
+                    Slider(uSyllables.toFloat(), { uSyllables = it.toInt() }, valueRange = 2f..5f)
+                }
+                Checks(listOf("大写首字母" to uCap, "加数字" to uDigits)) { i, b -> if (i == 0) uCap = b else uDigits = b }
             }
         }
     }

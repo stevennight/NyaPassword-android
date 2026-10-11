@@ -320,7 +320,10 @@ fun EditorScreen(activity: MainActivity, vaultId: String, itemId: String?, templ
     }
 
     genFor?.let { fid ->
-        GeneratorDialog(onClose = { genFor = null }) { pw ->
+        val field = d?.fields?.firstOrNull { ItemDoc.idOf(it) == fid }
+        val kind = field?.let { ItemDoc.text(it, "kind") }
+        val start = if (kind != "concealed" && kind != "pin" && field?.let { ItemDoc.text(it, "purpose") } == "username") "username" else "random"
+        GeneratorDialog(start, onClose = { genFor = null }) { pw ->
             edit { it.withFieldValue(fid, pw) }
             reveal[fid] = true
             genFor = null
@@ -374,6 +377,8 @@ private fun FieldEditor(
             if (secret) {
                 IconButton(onClick = { onReveal(id) }) { Icon(if (revealed) Icons.Filled.VisibilityOff else Icons.Filled.Visibility, if (revealed) "隐藏" else "显示") }
                 IconButton(onClick = { onGenerate(id) }) { Icon(Icons.Filled.Key, "生成") }
+            } else if (ItemDoc.text(f, "purpose") == "username") {
+                IconButton(onClick = { onGenerate(id) }) { Icon(Icons.Filled.Key, "生成用户名") }
             }
             Box {
                 IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, "字段设置") }
@@ -442,11 +447,11 @@ private fun FieldEditor(
 
 /** The generator as a dialog with "使用" (from the editor). */
 @Composable
-fun GeneratorDialog(onClose: () -> Unit, onUse: (String) -> Unit) {
+fun GeneratorDialog(start: String = "random", onClose: () -> Unit, onUse: (String) -> Unit) {
     AlertDialog(
         onDismissRequest = onClose,
-        title = { Text("密码生成器") },
-        text = { Generator(onUse = onUse) },
+        title = { Text(if (start == "username") "用户名生成器" else "密码生成器") },
+        text = { Generator(start, onUse = onUse) },
         confirmButton = { TextButton(onClick = onClose) { Text("关闭") } },
     )
 }

@@ -30,6 +30,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -120,6 +124,21 @@ fun <T> Seg(options: List<Pair<T, String>>, value: T, enabled: Boolean = true, o
                     color = if (on) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
                     fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal,
                 )
+            }
+        }
+    }
+}
+
+/** A password with digits and symbols in their own colors (the web page's `PwChars`). */
+@Composable
+fun pwChars(text: String): AnnotatedString {
+    val digit = MaterialTheme.colorScheme.primary
+    return buildAnnotatedString {
+        text.forEach { c ->
+            when {
+                c.isDigit() -> withStyle(SpanStyle(color = digit)) { append(c) }
+                !c.isLetter() && !c.isWhitespace() -> withStyle(SpanStyle(color = Warn)) { append(c) }
+                else -> append(c)
             }
         }
     }

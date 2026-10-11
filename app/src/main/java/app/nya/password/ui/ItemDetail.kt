@@ -387,6 +387,7 @@ fun FieldRow(v: Vault, f: ItemField, divider: Boolean) {
                         )
                         f.kind == "reference" -> Chip("引用：$text")
                         f.kind == "boolean" -> Text(if (text == "true") "是" else "否", fontSize = 15.sp)
+                        f.kind == "concealed" -> Text(pwChars(text), fontFamily = FontFamily.Monospace, fontSize = 15.sp)
                         else -> Text(text, fontFamily = if (f.secret) FontFamily.Monospace else FontFamily.Default, fontSize = 15.sp)
                     }
                 }
