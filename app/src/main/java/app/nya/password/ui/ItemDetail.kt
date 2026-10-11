@@ -9,6 +9,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -194,22 +195,24 @@ fun ItemDetailScreen(activity: MainActivity, vaultId: String, itemId: String) {
                     }
                 }
             }
-            IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, "更多") }
-            DropdownMenu(menu, { menu = false }) {
-                if (item.deleted) {
-                    DropdownMenuItem({ Text("恢复") }, onClick = {
-                        menu = false
-                        act {
-                            v.call { it.restoreItem(vaultId, itemId) }
-                            v.say("已从回收站恢复")
-                            v.edited()
-                        }
-                    })
-                    DropdownMenuItem({ Text("永久删除", color = MaterialTheme.colorScheme.error) }, onClick = { menu = false; confirm = "purge" })
-                } else {
-                    DropdownMenuItem({ Text(if (c.archived) "取消归档" else "归档") }, onClick = { menu = false; toggle("archived") })
-                    if (!locked) DropdownMenuItem({ Text("历史版本") }, onClick = { menu = false; history = true })
-                    DropdownMenuItem({ Text("移到回收站", color = MaterialTheme.colorScheme.error) }, onClick = { menu = false; confirm = "delete" })
+            Box {
+                IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, "更多") }
+                DropdownMenu(menu, { menu = false }) {
+                    if (item.deleted) {
+                        DropdownMenuItem({ Text("恢复") }, onClick = {
+                            menu = false
+                            act {
+                                v.call { it.restoreItem(vaultId, itemId) }
+                                v.say("已从回收站恢复")
+                                v.edited()
+                            }
+                        })
+                        DropdownMenuItem({ Text("永久删除", color = MaterialTheme.colorScheme.error) }, onClick = { menu = false; confirm = "purge" })
+                    } else {
+                        DropdownMenuItem({ Text(if (c.archived) "取消归档" else "归档") }, onClick = { menu = false; toggle("archived") })
+                        if (!locked) DropdownMenuItem({ Text("历史版本") }, onClick = { menu = false; history = true })
+                        DropdownMenuItem({ Text("移到回收站", color = MaterialTheme.colorScheme.error) }, onClick = { menu = false; confirm = "delete" })
+                    }
                 }
             }
         }
