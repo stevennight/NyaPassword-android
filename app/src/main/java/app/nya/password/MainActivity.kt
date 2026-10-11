@@ -51,8 +51,10 @@ import app.nya.password.ui.EditorScreen
 import app.nya.password.ui.GeneratorScreen
 import app.nya.password.ui.ItemDetailScreen
 import app.nya.password.ui.KitScreen
+import app.nya.password.ui.ListFilter
 import app.nya.password.ui.LockScreen
 import app.nya.password.ui.NpwTheme
+import app.nya.password.ui.OrganizeScreen
 import app.nya.password.ui.Route
 import app.nya.password.ui.SecurityScreen
 import app.nya.password.ui.SecureActivity
@@ -132,6 +134,16 @@ class MainActivity : SecureActivity() {
         if (stack.isNotEmpty()) stack.removeAt(stack.lastIndex)
     }
 
+    /** A list filter for [VaultScreen] to take on (set by other screens, e.g. a tag in 整理). */
+    val listRequest = mutableStateOf<ListFilter?>(null)
+
+    /** Shows the items with this tag (or a sub-tag) in the vault tab. */
+    fun showTag(tag: String) {
+        listRequest.value = ListFilter(kind = "tag", id = tag)
+        stack.clear()
+        tab.value = Tab.VAULT
+    }
+
     @Composable
     private fun Root() {
         val v = vault
@@ -168,6 +180,7 @@ class MainActivity : SecureActivity() {
                     is Route.Detail -> ItemDetailScreen(this@MainActivity, top.vaultId, top.itemId)
                     is Route.Edit -> EditorScreen(this@MainActivity, top.vaultId, top.itemId, top.template)
                     Route.Guide -> SetupGuideScreen(this@MainActivity)
+                    is Route.Organize -> OrganizeScreen(this@MainActivity, top.tab)
                 }
             }
             return

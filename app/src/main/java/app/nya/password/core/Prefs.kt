@@ -50,6 +50,11 @@ class Prefs(context: Context) {
         get() = p.getBoolean("inline_compat", true)
         set(v) = p.edit { putBoolean("inline_compat", v) }
 
+    /** Duplicate groups the user said are not duplicates (sorted item keys joined by `|`). */
+    var ignoredDuplicates: Set<String>
+        get() = p.getStringSet("ignored_duplicates", emptySet())?.toSet() ?: emptySet()
+        set(v) = p.edit { putStringSet("ignored_duplicates", v) }
+
     /** The server last typed on the sign-in page. */
     var lastServer: String
         get() = p.getString("last_server", "") ?: ""

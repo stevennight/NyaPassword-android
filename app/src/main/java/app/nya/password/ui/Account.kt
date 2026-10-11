@@ -65,6 +65,8 @@ sealed interface Route {
     data class Detail(val vaultId: String, val itemId: String) : Route
     data class Edit(val vaultId: String, val itemId: String?, val template: String = "login") : Route
     data object Guide : Route
+    /** 整理: `tab` is `duplicates` or `tags`. */
+    data class Organize(val tab: String = "duplicates") : Route
 }
 
 private val STRENGTH = listOf("很弱", "弱", "一般", "强", "很强")

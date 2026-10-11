@@ -1,7 +1,10 @@
 package app.nya.password.ui
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -21,12 +24,18 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CleaningServices
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
@@ -43,6 +52,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -57,12 +67,16 @@ import app.nya.password.MainActivity
 import app.nya.password.core.ItemView
 import app.nya.password.core.errorText
 import app.nya.password.vault
+import kotlinx.coroutines.launch
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
 /** Which items the list shows (the web vault's sidebar `Nav`). */
 data class ListFilter(
-    val kind: String = "all", // all | favorites | conflicts | vault | template | archived | trash
+    val kind: String = "all", // all | favorites | conflicts | vault | template | tag | archived | trash
     val id: String? = null,
     val query: String = "",
 ) {
@@ -75,6 +89,7 @@ data class ListFilter(
             "trash" -> put("trash", true)
             "vault" -> put("vault_id", id)
             "template" -> put("template", id)
+            "tag" -> put("tag", id)
         }
     }.toString()
 }
@@ -99,22 +114,116 @@ fun VaultScreen(activity: MainActivity, pad: PaddingValues) {
     var newMenu by remember { mutableStateOf(false) }
     var templateMenu by remember { mutableStateOf(false) }
     val templates = remember { v.templatesNow() }
+    val scope = rememberCoroutineScope()
+    var tags by remember { mutableStateOf<List<String>>(emptyList()) }
+    var tagMenu by remember { mutableStateOf(false) }
+    // multi-select (long press): bulk actions on the picked items
+    var selecting by remember { mutableStateOf(false) }
+    var picked by remember { mutableStateOf<List<String>>(emptyList()) }
+    var bulkMenu by remember { mutableStateOf(false) }
+    var dialog by remember { mutableStateOf("") } // add_tags | remove_tags | trash | purge | merge
+    val pickedItems = items.filter { itemKey(it) in picked }
+
+    fun endSelection() {
+        selecting = false
+        picked = emptyList()
+    }
+
+    fun toggle(item: ItemView) {
+        val k = itemKey(item)
+        selecting = true
+        picked = if (k in picked) picked - k else picked + k
+    }
+
+    fun runBulk(action: JsonObject, verb: String = "更新") {
+        val targets = pickedItems
+        scope.launch {
+            try {
+                v.say(bulkText(v.bulk(targets, action), verb))
+                v.edited()
+            } catch (e: Exception) {
+                v.say(errorText(e))
+            }
+        }
+    }
+
+    fun tagsAction(kind: String, list: List<String>) = buildJsonObject {
+        put("kind", kind)
+        put("tags", JsonArray(list.map { JsonPrimitive(it) }))
+    }
+
+    val actions: List<BulkEntry> = buildList {
+        if (filter.kind == "trash") {
+            add(BulkEntry("恢复 ${pickedItems.size} 个条目") { runBulk(buildJsonObject { put("kind", "restore") }, "恢复") })
+            add(BulkEntry("永久删除…", danger = true) { dialog = "purge" })
+        } else {
+            if (pickedItems.any { !it.favorite }) add(BulkEntry("加入收藏") { runBulk(buildJsonObject { put("kind", "favorite"); put("on", true) }) })
+            if (pickedItems.any { it.favorite }) add(BulkEntry("取消收藏") { runBulk(buildJsonObject { put("kind", "favorite"); put("on", false) }) })
+            if (pickedItems.any { !it.archived }) add(BulkEntry("归档") { runBulk(buildJsonObject { put("kind", "archive"); put("on", true) }, "归档") })
+            if (pickedItems.any { it.archived }) add(BulkEntry("取消归档") { runBulk(buildJsonObject { put("kind", "archive"); put("on", false) }) })
+            add(BulkEntry("添加标签…") { dialog = "add_tags" })
+            if (pickedItems.any { it.tags.isNotEmpty() }) add(BulkEntry("移除标签…") { dialog = "remove_tags" })
+            add(BulkEntry("合并为一个条目…", enabled = pickedItems.size >= 2) { dialog = "merge" })
+            add(BulkEntry("移到回收站…", danger = true) { dialog = "trash" })
+        }
+    }
+
+    BackHandler(selecting) { endSelection() }
+
+    // another screen asked for a filter (a tag in 整理)
+    val request = activity.listRequest.value
+    LaunchedEffect(request) {
+        if (request != null) {
+            filter = request
+            activity.listRequest.value = null
+        }
+    }
+    LaunchedEffect(filter.kind, filter.id) { endSelection() }
 
     LaunchedEffect(filter, v.version) {
         items = runCatching { v.items(filter.toJson()) }.getOrElse {
             v.say(errorText(it))
             emptyList()
         }
+        // picked items that left the list (trashed, filtered out) are no longer picked
+        val shown = items.map(::itemKey).toSet()
+        picked = picked.filter { it in shown }
+        tags = runCatching { v.tags() }.getOrDefault(emptyList())
         loaded = true
     }
 
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
-            Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("密码库", fontSize = 24.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                if (v.syncError.isNotEmpty()) Chip("同步失败", ChipKind.ERR)
-                IconButton(onClick = { v.syncSoon(silent = false) }, enabled = !v.syncing) {
-                    Icon(Icons.Filled.Sync, "立即同步", tint = if (v.syncing) MaterialTheme.colorScheme.primary else muted)
+            if (selecting) {
+                Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = { endSelection() }) { Icon(Icons.Filled.Close, "取消选择") }
+                    Text("已选 ${pickedItems.size} 项", fontSize = 20.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                    val all = items.isNotEmpty() && pickedItems.size == items.size
+                    TextButton(onClick = { picked = if (all) emptyList() else items.map(::itemKey) }) { Text(if (all) "全不选" else "全选") }
+                    Box {
+                        IconButton(onClick = { bulkMenu = true }, enabled = pickedItems.isNotEmpty()) { Icon(Icons.Filled.MoreVert, "批量操作") }
+                        DropdownMenu(bulkMenu, { bulkMenu = false }) {
+                            actions.forEach { a ->
+                                DropdownMenuItem(
+                                    { Text(a.label, color = if (a.danger) MaterialTheme.colorScheme.error else Color.Unspecified) },
+                                    onClick = {
+                                        bulkMenu = false
+                                        a.run()
+                                    },
+                                    enabled = a.enabled,
+                                )
+                            }
+                        }
+                    }
+                }
+            } else {
+                Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("密码库", fontSize = 24.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    if (v.syncError.isNotEmpty()) Chip("同步失败", ChipKind.ERR)
+                    IconButton(onClick = { activity.open(Route.Organize()) }) { Icon(Icons.Filled.CleaningServices, "整理", tint = muted) }
+                    IconButton(onClick = { v.syncSoon(silent = false) }, enabled = !v.syncing) {
+                        Icon(Icons.Filled.Sync, "立即同步", tint = if (v.syncing) MaterialTheme.colorScheme.primary else muted)
+                    }
                 }
             }
             OutlinedTextField(
@@ -153,6 +262,27 @@ fun VaultScreen(activity: MainActivity, pad: PaddingValues) {
                         }
                     }
                 }
+                if (tags.isNotEmpty() || filter.kind == "tag") {
+                    Box {
+                        FilterChip(filter.kind == "tag", { tagMenu = true }, { Text(if (filter.kind == "tag") "# ${filter.id}" else "标签 ▾") })
+                        DropdownMenu(tagMenu, { tagMenu = false }) {
+                            tags.forEach { t ->
+                                DropdownMenuItem(
+                                    text = { Text("  ".repeat(t.count { it == '/' }) + "# " + t.substringAfterLast('/')) },
+                                    onClick = {
+                                        tagMenu = false
+                                        filter = filter.copy(kind = "tag", id = t)
+                                    },
+                                )
+                            }
+                            HorizontalDivider()
+                            DropdownMenuItem(text = { Text("管理标签…") }, onClick = {
+                                tagMenu = false
+                                activity.open(Route.Organize("tags"))
+                            })
+                        }
+                    }
+                }
                 FilterChip(filter.kind == "archived", { filter = filter.copy(kind = "archived", id = null) }, { Text("归档") })
                 FilterChip(filter.kind == "trash", { filter = filter.copy(kind = "trash", id = null) }, { Text("回收站") })
             }
@@ -178,17 +308,70 @@ fun VaultScreen(activity: MainActivity, pad: PaddingValues) {
                         }
                     }
                     items(items, key = { it.vaultId + "/" + it.itemId }) { item ->
-                        ItemRow(item) { activity.open(Route.Detail(item.vaultId, item.itemId)) }
+                        ItemRow(item, picked = if (selecting) itemKey(item) in picked else null, onLongClick = { toggle(item) }) {
+                            if (selecting) toggle(item) else activity.open(Route.Detail(item.vaultId, item.itemId))
+                        }
                         HorizontalDivider(Modifier.padding(start = 64.dp), color = MaterialTheme.colorScheme.outlineVariant)
                     }
                 }
             }
         }
-        if (filter.kind != "trash") {
+        if (filter.kind != "trash" && !selecting) {
             FloatingActionButton(
                 onClick = { newMenu = true },
                 modifier = Modifier.align(Alignment.BottomEnd).padding(end = 20.dp, bottom = pad.calculateBottomPadding() + 20.dp),
             ) { Icon(Icons.Filled.Add, "新建") }
+        }
+    }
+
+    when (dialog) {
+        "add_tags" -> TagInputDialog(
+            "添加标签",
+            "给选中的 ${pickedItems.size} 个条目加上标签。多个标签用逗号分隔，“工作/开发”表示嵌套。",
+            suggestions = tags,
+            ok = "添加",
+            onDismiss = { dialog = "" },
+        ) { text ->
+            dialog = ""
+            val list = parseTags(text)
+            if (list.isNotEmpty()) runBulk(tagsAction("add_tags", list))
+        }
+        "remove_tags" -> ChooseDialog(
+            "移除标签",
+            "从选中的 ${pickedItems.size} 个条目上去掉这些标签：",
+            pickedItems.flatMap { it.tags }.distinct().sorted(),
+            "移除",
+            { dialog = "" },
+        ) { list ->
+            dialog = ""
+            runBulk(tagsAction("remove_tags", list))
+        }
+        "trash" -> ConfirmDialog("移到回收站？", "选中的 ${pickedItems.size} 个条目会移到回收站，可以随时恢复。", "移到回收站", true, { dialog = "" }) {
+            dialog = ""
+            runBulk(buildJsonObject { put("kind", "trash") }, "移到回收站")
+        }
+        "purge" -> ConfirmDialog(
+            "永久删除？",
+            "选中的 ${pickedItems.size} 个条目及其全部历史版本和附件会从服务器上删除，无法恢复（备份里还有）。",
+            "永久删除", true, { dialog = "" },
+        ) {
+            dialog = ""
+            val byVault = pickedItems.filter { it.deleted }.groupBy { it.vaultId }
+            scope.launch {
+                try {
+                    var n = 0
+                    for ((vid, list) in byVault) n += v.call { it.purge(vid, list.map { i -> i.itemId }) }.size
+                    v.say("已永久删除 $n 个条目")
+                    v.edited()
+                } catch (e: Exception) {
+                    v.say(errorText(e))
+                }
+            }
+        }
+        "merge" -> MergeDialog(v, pickedItems, { dialog = "" }) { keep ->
+            dialog = ""
+            endSelection()
+            activity.open(Route.Detail(keep.vaultId, keep.itemId))
         }
     }
 
@@ -218,12 +401,20 @@ fun VaultScreen(activity: MainActivity, pad: PaddingValues) {
     }
 }
 
+/** An entry of the bulk action menu. */
+private class BulkEntry(val label: String, val danger: Boolean = false, val enabled: Boolean = true, val run: () -> Unit)
+
+/** `picked`: null outside multi-select, else whether this item is picked. */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun ItemRow(item: ItemView, onClick: () -> Unit) {
+fun ItemRow(item: ItemView, picked: Boolean? = null, onLongClick: (() -> Unit)? = null, onClick: () -> Unit) {
     Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).clickable(onClick = onClick).padding(horizontal = 6.dp, vertical = 10.dp),
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
+            .background(if (picked == true) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f) else Color.Transparent)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick).padding(horizontal = 6.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        if (picked != null) Checkbox(picked, { onClick() })
         Avatar(item.title, item.template, 40)
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {

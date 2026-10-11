@@ -290,3 +290,26 @@ data class Content(
 }
 
 inline fun <reified T> decode(json: String): T = CoreJson.decodeFromString(json)
+
+/** An item a bulk edit left alone; `reason`: `read_only` or `not_found`. */
+@Serializable
+data class BulkSkipped(val vaultId: String = "", val itemId: String = "", val title: String = "", val reason: String = "")
+
+@Serializable
+data class BulkReport(val changed: Int = 0, val unchanged: Int = 0, val skipped: List<BulkSkipped> = emptyList())
+
+@Serializable
+data class TagCount(val tag: String, val items: Int = 0)
+
+/** Items that look like the same thing saved twice; newest first (the first is the suggested one to keep). */
+@Serializable
+data class DuplicateGroup(
+    val site: String = "",
+    val username: String = "",
+    val items: List<ItemView> = emptyList(),
+    val samePassword: Boolean = false,
+    val identical: Boolean = false,
+)
+
+@Serializable
+data class MergeReport(val trashed: Int = 0, val attachmentsCopied: Int = 0, val secretsToHistory: Int = 0)

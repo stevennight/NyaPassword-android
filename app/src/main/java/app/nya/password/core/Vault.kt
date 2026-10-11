@@ -27,7 +27,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
@@ -478,6 +482,28 @@ class Vault(private val app: Application) {
     suspend fun item(vaultId: String, itemId: String): ItemView = decode(call { it.item(vaultId, itemId) })
 
     fun templatesNow(): List<TemplateInfo> = decode(templates("zh-CN"))
+
+    suspend fun tags(): List<String> = decode(call { it.tags() })
+    suspend fun tagCounts(): List<TagCount> = decode(call { it.tagCounts() })
+
+    /** One action (`BulkAction` JSON, e.g. `{"kind":"archive","on":true}`) on many items, in one local transaction. */
+    suspend fun bulk(items: List<ItemView>, action: JsonObject): BulkReport =
+        decode(call { it.bulkUpdate(refs(items), action.toString()) })
+
+    suspend fun renameTag(from: String, to: String): BulkReport = decode(call { it.renameTag(from, to) })
+    suspend fun deleteTag(tag: String): BulkReport = decode(call { it.deleteTag(tag) })
+    suspend fun duplicates(): List<DuplicateGroup> = decode(call { it.duplicates() })
+
+    /** Merges `others` into `keep` and moves them to the trash (copying attachments needs the server). */
+    suspend fun merge(keep: ItemView, others: List<ItemView>): MergeReport =
+        decode(call { it.mergeItems(ref(keep).toString(), refs(others)) })
+
+    private fun ref(i: ItemView): JsonObject = buildJsonObject {
+        put("vault_id", i.vaultId)
+        put("item_id", i.itemId)
+    }
+
+    private fun refs(items: List<ItemView>): String = buildJsonArray { items.forEach { add(ref(it)) } }.toString()
 
     fun otp(uri: String): OtpCode? = runCatching {
         decode<OtpCode>(otpCode(uri, System.currentTimeMillis() / 1000))

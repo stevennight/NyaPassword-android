@@ -225,6 +225,15 @@ fun SecurityScreen(activity: MainActivity, pad: PaddingValues) {
     ) {
         Text("安全检查", fontSize = 24.sp, fontWeight = FontWeight.Bold)
         Text("全部在本机计算，不会把任何密码发出去。", color = muted, fontSize = 13.sp)
+        Group {
+            Row(Modifier.fillMaxWidth().clickable { activity.open(Route.Organize()) }.padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("🧹 整理密码库", fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                    Text("合并重复的条目，重命名、合并或删除标签", fontSize = 12.5.sp, color = muted)
+                }
+                Text("›", fontSize = 20.sp, color = muted)
+            }
+        }
         val r = report
         if (r == null) {
             LinearProgressIndicator(Modifier.fillMaxWidth())
