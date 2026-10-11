@@ -182,7 +182,7 @@ fun GeneratorScreen(pad: PaddingValues) {
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = pad.calculateBottomPadding() + 24.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text("密码生成器", fontSize = 24.sp, fontWeight = FontWeight.Bold)
+        Text("生成器", fontSize = 24.sp, fontWeight = FontWeight.Bold)
         Group {
             Column(Modifier.padding(16.dp)) { Generator() }
         }
